@@ -1,6 +1,6 @@
 [project]
 name = "laufband"
-version = "0.1.0"
+version = "0.1.1"
 description = "Parallel Iteration with File-Based Coordination"
 authors = [
     { name = "Fabian Zills", email = "fzills@icp.uni-stuttgart.de" },
@@ -23,3 +23,8 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[project.urls]
+Repository = "https://github.com/zincware/laufband"
+Releases = "https://github.com/zincware/zntrack/laufband"
+Discord = "https://discord.gg/7ncfwhsnm4"
