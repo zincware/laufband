@@ -12,7 +12,7 @@ _T = t.TypeVar("_T")
 def laufband(
     data: Sequence[_T], lock: Lock | None = None, com: Path | None = None, **kwargs
 ) -> Generator[_T, None, None]:
-    """Laufband
+    """Laufband generator for parallel processing using file-based locking.
 
     Arguments
     ---------
@@ -26,6 +26,29 @@ def laufband(
         If not provided, a file named "laufband.json" will be used and removed after completion.
     kwargs : dict
         Additional arguments to pass to tqdm.
+
+    Example
+    -------
+    >>> import json
+    >>> import time
+    >>> from pathlib import Path
+    >>> from flufl.lock import Lock
+    >>> from laufband import laufband
+    ... 
+    >>> output_file = Path("data.json")
+    >>> output_file.write_text(json.dumps({"processed_data": []}))
+    >>> data = list(range(100))
+    >>> lock = Lock("laufband.lock")
+    ...
+    >>> for item in laufband(data, lock=lock, desc="using Laufband"):
+    ...    # Simulate some computationally intensive task
+    ...    time.sleep(0.1)
+    ...    with lock:
+    ...        # Access and modify a shared resource (e.g., a file) safely using the lock
+    ...        file_content = json.loads(output_file.read_text())
+    ...        file_content["processed_data"].append(item)
+    ...        output_file.write_text(json.dumps(file_content))
+
     """
     remove_com = com is None
     if com is None:
