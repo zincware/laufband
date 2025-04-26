@@ -1,5 +1,4 @@
 from flufl.lock import Lock
-import time
 from tqdm import tqdm
 import json
 from pathlib import Path
