@@ -59,6 +59,22 @@ def worker(lock_path: Path, com_path: Path, output_path: Path, name):
         time.sleep(0.1)  # simulate some processing time
 
 
+def test_worker(tmp_path):
+    """Test worker function."""
+    lock_path = tmp_path / "ptqdm.lock"
+    com_path = tmp_path / "laufband.json"
+    output_path = tmp_path / "data.json"
+
+    # Setup files
+    output_path.write_text(json.dumps({"data": []}))
+
+    worker(lock_path, com_path, output_path, "data")
+
+    # Validate output
+    final_data = json.loads(output_path.read_text())["data"]
+    assert final_data == list(range(100))
+
+
 def test_multiprocessing_pool(tmp_path):
     """Test laufband using a multiprocessing pool."""
     lock_path = tmp_path / "ptqdm.lock"

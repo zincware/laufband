@@ -34,7 +34,7 @@ def laufband(
     >>> from pathlib import Path
     >>> from flufl.lock import Lock
     >>> from laufband import laufband
-    ... 
+    ...
     >>> output_file = Path("data.json")
     >>> output_file.write_text(json.dumps({"processed_data": []}))
     >>> data = list(range(100))
