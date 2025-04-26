@@ -1,6 +1,6 @@
 <div align="center">
     
-![Logo](https://github.com/user-attachments/assets/83758b51-641e-4f84-8591-442e3215abd7)
+![Logo](https://github.com/user-attachments/assets/c8d2a3f9-284b-474d-b46d-98612c9d266b)
 </div>
 
 # Laufband: Parallel Iteration with File-Based Coordination
