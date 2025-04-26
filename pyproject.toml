@@ -1,7 +1,7 @@
 [project]
 name = "laufband"
 version = "0.1.0"
-description = "file-locked iterator"
+description = "Parallel Iteration with File-Based Coordination"
 authors = [
     { name = "Fabian Zills", email = "fzills@icp.uni-stuttgart.de" },
 ]
