@@ -30,7 +30,6 @@ def laufband(
                 # No more work left
                 tbar.n = len(state["completed"])
                 tbar.refresh()
-                print("All items processed.")
                 return
 
         # Update progress bar for completed items
@@ -55,5 +54,4 @@ def laufband(
                 state = json.loads(com.read_text())
                 if len(state["active"]) == 0 and len(state["completed"]) == len(data):
                     com.unlink()
-                    print("All items processed. Communication file removed.")
                     return
