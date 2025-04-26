@@ -1,7 +1,11 @@
 [project]
 name = "laufband"
 version = "0.1.0"
-description = "Add your description here"
+description = "file-locked iterator"
+authors = [
+    { name = "Fabian Zills", email = "fzills@icp.uni-stuttgart.de" },
+]
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -13,6 +17,7 @@ dev = [
     "pytest>=8.3.5",
     "flufl-lock>=8.1.0",
     "ruff>=0.11.7",
+    "pytest-cov>=6.1.1",
 ]
 
 [build-system]
