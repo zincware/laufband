@@ -1,56 +1,60 @@
-# Laufband
+# Laufband: Parallel Iteration with File-Based Coordination
 
-With laufband you can iterate over a given dataset from multiple processes, using file-based locking and communication.
+Laufband enables parallel iteration over a dataset from multiple processes, utilizing file-based locking and communication to ensure each item is processed exactly once.
 
 ## Installation
 
-```
+Install Laufband using pip:
+
+```bash
 pip install laufband
 ```
 
 ## Usage
 
-You can use laufband like your normal tqdm progressbar:
+Using Laufband is similar to the familiar `tqdm` progress bar for sequential iteration.
 
 ```python
 from laufband import laufband
 
 data = list(range(100))
-for point in laufband(data):
-    # do something with data
+for item in laufband(data):
+    # Process each item in the dataset
+    pass
 ```
 
-The interesting part happens, if you run this program in parallel.
-Each process will communicate with the others and ensure, that each item only appears in one of them.
+The true power of Laufband emerges when you run your script in parallel. Multiple processes will coordinate using file-based locking to ensure that each item in the dataset is processed by only one process.
 
-Therefore, laufband uses locking. A typical example could look like this.
+Here's a typical example demonstrating parallel processing with Laufband and file-based locking for shared resource access:
 
 ```python
 import json
 import time
 from pathlib import Path
-
 from flufl.lock import Lock
 from laufband import laufband
 
-output = Path("data.json")
-output.write_text(json.dumps({"data": []}))
+output_file = Path("data.json")
+output_file.write_text(json.dumps({"processed_data": []}))
 data = list(range(100))
 lock = Lock("laufband.lock")
 
-for point in laufband(data):
-    # do some calculation you want to run in parallel
+for item in laufband(data, lock=lock, desc="using Laufband"):
+    # Simulate some computationally intensive task
     time.sleep(0.1)
     with lock:
-        # save the result to a file.
-        # if it is a shared file, you need to use a lock
-        filecontent = json.loads(output.read_text())
-        filecontent["data"].append(point)
-        output.write_text(json.dumps(filecontent))
+        # Access and modify a shared resource (e.g., a file) safely using the lock
+        file_content = json.loads(output_file.read_text())
+        file_content["processed_data"].append(item)
+        output_file.write_text(json.dumps(file_content))
 ```
 
-Assuming this code is in a file `main.py` you can iterate in parallel.
+To execute this script (`main.py`) in parallel, you can use a command like the following in your terminal (this example launches 10 background processes):
 
 ```bash
 for i in {1..10} ; do python main.py & done
 ```
+
+> [!IMPORTANT]
+> The different processes may finish at different times. Therefore, the order of items in `file_content` is not guaranteed.
+> If the order is important, you will need to implement sorting logic afterwards.
