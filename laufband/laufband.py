@@ -1,14 +1,32 @@
 import json
+import typing as t
 from collections.abc import Generator, Sequence
 from pathlib import Path
 
 from flufl.lock import Lock
 from tqdm import tqdm
 
+_T = t.TypeVar("_T")
+
 
 def laufband(
-    data: Sequence, lock: Lock | None = None, com: Path | None = None, **kwargs
-) -> Generator:
+    data: Sequence[_T], lock: Lock | None = None, com: Path | None = None, **kwargs
+) -> Generator[_T, None, None]:
+    """Laufband
+
+    Arguments
+    ---------
+    data : Sequence
+        The data to process. Any object implementing ``__len__`` and ``__getitem__``
+        if supported.
+    lock : Lock | None
+        A lock object to ensure thread safety. If None, a new lock will be created.
+    com : Path | None
+        The path to the JSON file used to store the state. If None, a new file will be created.
+        If not provided, a file named "laufband.json" will be used and removed after completion.
+    kwargs : dict
+        Additional arguments to pass to tqdm.
+    """
     remove_com = com is None
     if com is None:
         com = Path("laufband.json")
