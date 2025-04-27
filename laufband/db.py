@@ -102,3 +102,16 @@ class LaufbandDB:
             )
             rows = cursor.fetchall()
         return [row[0] - 1 for row in rows]
+    
+    def get_worker(self, idx: int) -> Optional[str]:
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT worker FROM progress_table
+                WHERE id = ?
+                """,
+                (idx + 1,),  # Adjust for 0-based index
+            )
+            row = cursor.fetchone()
+        return row[0] if row else None

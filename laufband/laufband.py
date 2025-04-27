@@ -1,6 +1,7 @@
 import typing as t
 from collections.abc import Generator, Sequence
 from pathlib import Path
+import os
 
 from flufl.lock import Lock
 from tqdm import tqdm
@@ -28,6 +29,7 @@ def laufband(
     data: Sequence[_T],
     lock: Lock | None = None,
     com: Path | str | None = None,
+    identifier: str | t.Callable | None = os.getpid,
     **kwargs,
 ) -> Generator[_T, None, None]:
     """Laufband generator for parallel processing using file-based locking.
@@ -42,6 +44,9 @@ def laufband(
     com : Path | None
         The path to the db file used to store the state. If given, the file will not be removed.
         If not provided, a file named "laufband.sqlite" will be used and removed after completion.
+    identifier : str | callable, optional
+        A unique identifier for the worker. If not set, the process ID will be used.
+        If a callable is provided, it will be called to generate the identifier.
     kwargs : dict
         Additional arguments to pass to tqdm.
 
@@ -74,7 +79,13 @@ def laufband(
         com = Path("laufband.sqlite")
     if lock is None:
         lock = Lock("laufband.lock")
-    db = LaufbandDB(com)
+    if identifier is None:
+        db = LaufbandDB(com)
+    elif callable(identifier):
+        db = LaufbandDB(com, worker=identifier())
+    else:
+        db = LaufbandDB(com, worker=identifier)
+
     with lock:
         size = len(data)
         if not com.exists():

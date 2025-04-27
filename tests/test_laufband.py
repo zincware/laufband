@@ -193,3 +193,22 @@ def test_inconsistent_db(tmp_path):
     with pytest.raises(ValueError, match="The size of the data does not match the size of the database."):
         for i in laufband(list(range(100)), com=db.db_path):
             pass
+
+def test_identifier(tmp_path):
+    """Test if laufband can handle multiple workers."""
+    lock = Lock("ptqdm.lock")
+    data = list(range(100))
+    com = tmp_path / "laufband.sqlite"
+    db = LaufbandDB(com)
+
+    for idx in laufband(data, lock, com, identifier="worker_1"):
+        if idx == 50:
+            close()
+
+    for idx in laufband(data, lock, com, identifier="worker_2"):
+        pass
+
+    for idx in range(51):
+        assert db.get_worker(idx) == "worker_1"
+    for idx in range(51, 100):
+        assert db.get_worker(idx) == "worker_2"
