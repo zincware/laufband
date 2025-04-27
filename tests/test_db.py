@@ -58,6 +58,7 @@ def test_set_failed(tracker: LaufbandDB):
     assert tracker.list_state("completed") == []
     assert tracker.list_state("pending") == []
 
+
 def test_get_worker(tracker: LaufbandDB):
     tracker.create(10)
     tracker.worker = "worker_1"
@@ -66,7 +67,7 @@ def test_get_worker(tracker: LaufbandDB):
         tracker.finalize(job, "completed")
         if job == 5:
             break
-    
+
     tracker.worker = "worker_2"
 
     for job in tracker:
@@ -74,4 +75,3 @@ def test_get_worker(tracker: LaufbandDB):
 
     for idx in range(10):
         assert tracker.get_worker(idx) == "worker_2" if idx > 5 else "worker_1"
-

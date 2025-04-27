@@ -102,7 +102,7 @@ class LaufbandDB:
             )
             rows = cursor.fetchall()
         return [row[0] - 1 for row in rows]
-    
+
     def get_worker(self, idx: int) -> Optional[str]:
         with self.connect() as conn:
             cursor = conn.cursor()

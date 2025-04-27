@@ -188,11 +188,15 @@ def test_inconsistent_db(tmp_path):
 
     for i in laufband(list(range(10)), com=db.db_path):
         pass
-    
+
     # same database, different size is not allowed
-    with pytest.raises(ValueError, match="The size of the data does not match the size of the database."):
+    with pytest.raises(
+        ValueError,
+        match="The size of the data does not match the size of the database.",
+    ):
         for i in laufband(list(range(100)), com=db.db_path):
             pass
+
 
 def test_identifier(tmp_path):
     """Test if laufband can handle multiple workers."""

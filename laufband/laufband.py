@@ -1,7 +1,7 @@
+import os
 import typing as t
 from collections.abc import Generator, Sequence
 from pathlib import Path
-import os
 
 from flufl.lock import Lock
 from tqdm import tqdm
