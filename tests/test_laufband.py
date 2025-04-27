@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from flufl.lock import Lock
 
-from laufband import close, laufband
+from laufband import laufband
 from laufband.db import LaufbandDB
 
 
@@ -117,14 +117,16 @@ def test_resume_progress(tmp_path):
     output = tmp_path / "data.json"
     output.write_text(json.dumps({"data": []}))
 
-    for idx, point in enumerate(laufband(data, lock, db_path)):
+    pbar = laufband(data, lock, db_path)
+
+    for idx, point in enumerate(pbar):
         with lock:
             filecontent = json.loads(output.read_text())
             filecontent["data"].append(point)
             output.write_text(json.dumps(filecontent))
         if idx == 5:
             # Simulate a crash or interruption
-            close()
+            pbar.close()
 
     assert len(json.loads(output.read_text())["data"]) == 6
     assert db.list_state("running") == []
@@ -205,13 +207,16 @@ def test_identifier(tmp_path):
     com = tmp_path / "laufband.sqlite"
     db = LaufbandDB(com)
 
-    for idx in laufband(data, lock, com, identifier="worker_1"):
-        if idx == 50:
-            close()
+    pbar = laufband(data, lock, com, identifier="worker_1")
 
-    for idx in laufband(data, lock, com, identifier=lambda: "worker_2"):
+    for idx in pbar:
+        if idx == 50:
+            pbar.close()
+
+    pbar = laufband(data, lock, com, identifier="worker_2")
+    for idx in pbar:
         if idx == 75:
-            close()
+            pbar.close()
     for idx in laufband(data, lock, com, identifier=None):
         pass
 
