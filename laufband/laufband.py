@@ -10,8 +10,8 @@ from laufband.db import LaufbandDB
 
 _T = t.TypeVar("_T")
 
-class Laufband:
 
+class Laufband:
     def __init__(
         self,
         data: Sequence[_T],
