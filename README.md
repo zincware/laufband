@@ -113,10 +113,7 @@ The following example uses a MACE foundation model to compute energies and force
 > [!TIP]
 > You can safely run this script multiple times — even across multiple SLURM jobs — without any modifications.
 > Laufband will automatically coordinate which configurations are processed.
-> For local parallelization, you can use bash
-> ```bash
-> for i in {1..10} ; do python main.py & done
-> ```
+> For local parallelization, you can use bash: `for i in {1..10} ; do python main.py & done`
 
 ```python
 import ase.io
