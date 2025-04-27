@@ -226,3 +226,17 @@ def test_identifier(tmp_path):
         assert db.get_worker(idx) == "worker_2"
     for idx in range(76, 100):
         assert db.get_worker(idx) is None
+
+
+def test_iter_access_lock(tmp_path):
+    """Test if iter access lock works."""
+    os.chdir(tmp_path)
+    data = list(range(100))
+
+    pbar = Laufband(data)
+    assert isinstance(pbar.lock, Lock)
+    assert not pbar.lock.is_locked
+    for idx in pbar:
+        with pbar.lock:
+            assert pbar.lock.is_locked
+    assert not pbar.lock.is_locked
