@@ -1,17 +1,34 @@
-import json
 import typing as t
 from collections.abc import Generator, Sequence
 from pathlib import Path
 
 from flufl.lock import Lock
 from tqdm import tqdm
+
 from laufband.db import LaufbandDB
 
 _T = t.TypeVar("_T")
 
+CLOSE_TRIGGER = False
+
+
+def close():
+    """Exit out of the laufband generator.
+
+    If you use ``break`` inside a laufband loop,
+    it will be registered as a failed job.
+    Instead, you can use this function to exit
+    the laufband generator marking the job as completed.
+    """
+    global CLOSE_TRIGGER
+    CLOSE_TRIGGER = True
+
 
 def laufband(
-    data: Sequence[_T], lock: Lock | None = None, com: Path |str| None = None, **kwargs
+    data: Sequence[_T],
+    lock: Lock | None = None,
+    com: Path | str | None = None,
+    **kwargs,
 ) -> Generator[_T, None, None]:
     """Laufband generator for parallel processing using file-based locking.
 
@@ -51,6 +68,7 @@ def laufband(
     ...        output_file.write_text(json.dumps(file_content))
 
     """
+    global CLOSE_TRIGGER
     remove_com = com is None
     if com is None:
         com = Path("laufband.sqlite")
@@ -70,18 +88,6 @@ def laufband(
             except StopIteration:
                 # No more items to process
                 break
-            # state = json.loads(com.read_text())
-            # # find the next index to process
-            # for idx in range(len(data)):
-            #     if idx not in state["active"] + state["completed"]:
-            #         state["active"].append(idx)
-            #         com.write_text(json.dumps(state))
-            #         break
-            # else:
-            #     # No more work left
-            #     tbar.n = len(state["completed"])
-            #     tbar.refresh()
-            #     return
 
         # Update progress bar for completed items
         tbar.n = len(completed)
@@ -89,18 +95,23 @@ def laufband(
 
         try:
             yield data[idx]
-        finally:
-            tbar.update(1)
+        except GeneratorExit:
+            # Handle generator exit
             with lock:
-                # After processing, mark as completed
-                db.finalize(idx, "completed")
-                completed = db.list_state("completed")
-                # state = json.loads(com.read_text())
-                # state["active"].remove(idx)
-                # state["completed"].append(idx)
-                if len(completed) == size:
-                    if remove_com:
-                        com.unlink()
-                    return
-                
-                # com.write_text(json.dumps(state))
+                db.finalize(idx, "failed")
+            raise
+
+        tbar.update(1)
+
+        with lock:
+            # After processing, mark as completed
+            db.finalize(idx, "completed")
+            completed = db.list_state("completed")
+            if len(completed) == size:
+                if remove_com:
+                    com.unlink()
+                return
+
+        if CLOSE_TRIGGER:
+            CLOSE_TRIGGER = False
+            break

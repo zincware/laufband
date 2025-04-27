@@ -1,12 +1,16 @@
-import pytest
 import sqlite3
-from laufband.db import LaufbandDB  # Assuming your class is in laufband/db.py
 from pathlib import Path
+
+import pytest
+
+from laufband.db import LaufbandDB  # Assuming your class is in laufband/db.py
+
 
 # Use a function to create a fresh ProgressTracker instance for each test
 @pytest.fixture
 def tracker(tmp_path: Path) -> LaufbandDB:
     return LaufbandDB(tmp_path / "test_progress.db")
+
 
 def test_create_table(tracker: LaufbandDB):
     tracker.create(10)
@@ -17,9 +21,11 @@ def test_create_table(tracker: LaufbandDB):
         # Attempt to create the table again, which should fail
         tracker.create(10)
 
+
 def test_len(tracker: LaufbandDB):
     tracker.create(10)
     assert len(tracker) == 10
+
 
 def test_next(tracker: LaufbandDB):
     tracker.create(10)
@@ -28,23 +34,25 @@ def test_next(tracker: LaufbandDB):
     assert tracker.list_state("running") == data
     assert data == list(range(10))
 
+
 def test_set_completed(tracker: LaufbandDB):
     tracker.create(10)
 
     for job in tracker:
         tracker.finalize(job, "completed")
-    
+
     assert tracker.list_state("completed") == list(range(10))
     assert tracker.list_state("running") == []
     assert tracker.list_state("failed") == []
     assert tracker.list_state("pending") == []
+
 
 def test_set_failed(tracker: LaufbandDB):
     tracker.create(10)
 
     for job in tracker:
         tracker.finalize(job, "failed")
-    
+
     assert tracker.list_state("failed") == list(range(10))
     assert tracker.list_state("running") == []
     assert tracker.list_state("completed") == []

@@ -4,9 +4,10 @@ import os
 import time
 from pathlib import Path
 
+import pytest
 from flufl.lock import Lock
 
-from laufband import laufband
+from laufband import close, laufband
 from laufband.db import LaufbandDB
 
 
@@ -123,7 +124,7 @@ def test_resume_progress(tmp_path):
             output.write_text(json.dumps(filecontent))
         if idx == 5:
             # Simulate a crash or interruption
-            break
+            close()
 
     assert len(json.loads(output.read_text())["data"]) == 6
     assert db.list_state("running") == []
@@ -143,3 +144,39 @@ def test_resume_progress(tmp_path):
     assert db.list_state("completed") == list(range(10))
     assert db.list_state("failed") == []
     assert db.list_state("pending") == []
+
+
+def test_failed(tmp_path):
+    """Test if laufband can handle failed jobs."""
+    com = tmp_path / "laufband.sqlite"
+    db = LaufbandDB(com)
+
+    with pytest.raises(ValueError):
+        data = list(range(100))
+        for idx, item in enumerate(laufband(data, com=com)):
+            # Process each item in the dataset
+            if idx == 50:
+                print("raising error")
+                raise ValueError("Simulated failure")
+
+    assert db.list_state("running") == []
+    assert db.list_state("completed") == list(range(50))
+    assert db.list_state("failed") == [50]
+    assert db.list_state("pending") == list(range(51, 100))
+
+
+def test_failed_via_break(tmp_path):
+    """Test if laufband can handle failed jobs."""
+    com = tmp_path / "laufband.sqlite"
+    db = LaufbandDB(com)
+
+    data = list(range(100))
+    for idx, item in enumerate(laufband(data, com=com)):
+        # Process each item in the dataset
+        if idx == 50:
+            break
+
+    assert db.list_state("running") == []
+    assert db.list_state("completed") == list(range(50))
+    assert db.list_state("failed") == [50]
+    assert db.list_state("pending") == list(range(51, 100))

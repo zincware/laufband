@@ -1,12 +1,13 @@
-import sqlite3
-from typing import Optional
-from dataclasses import dataclass
 import contextlib
-from pathlib import Path
-from collections.abc import Iterator
+import sqlite3
 import typing as t
+from collections.abc import Iterator
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
 
-STATES = t.Literal["running", "pending", "failed", "completed"]
+T_STATE = t.Literal["running", "pending", "failed", "completed"]
+
 
 @dataclass
 class LaufbandDB:
@@ -39,7 +40,7 @@ class LaufbandDB:
                 )
                 RETURNING id
                 """,
-                (self.worker,)
+                (self.worker,),
             )
             row = cursor.fetchone()
             conn.commit()
@@ -72,11 +73,11 @@ class LaufbandDB:
                     INSERT INTO progress_table (state, worker)
                     VALUES (?, ?)
                     """,
-                    ('pending', None)
+                    ("pending", None),
                 )
             conn.commit()
 
-    def finalize(self, idx: int, state: STATES = "completed"):
+    def finalize(self, idx: int, state: T_STATE = "completed"):
         with self.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -85,11 +86,11 @@ class LaufbandDB:
                 SET state = ?
                 WHERE id = ?
                 """,
-                (state, idx + 1)  # Adjust for 0-based index
+                (state, idx + 1),  # Adjust for 0-based index
             )
             conn.commit()
 
-    def list_state(self, state: STATES) -> list[int]:
+    def list_state(self, state: T_STATE) -> list[int]:
         with self.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -97,7 +98,7 @@ class LaufbandDB:
                 SELECT id FROM progress_table
                 WHERE state = ?
                 """,
-                (state,)
+                (state,),
             )
             rows = cursor.fetchall()
         return [row[0] - 1 for row in rows]
