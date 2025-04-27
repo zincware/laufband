@@ -80,19 +80,15 @@ def laufband(
         try:
             yield data[idx]
         finally:
+            tbar.update(1)
             with lock:
                 # After processing, mark as completed
                 state = json.loads(com.read_text())
-                if idx in state["active"]:
-                    state["active"].remove(idx)
-                if idx not in state["completed"]:
-                    state["completed"].append(idx)
-                com.write_text(json.dumps(state))
-                tbar.update(1)
-
-        if remove_com:
-            with lock:
-                state = json.loads(com.read_text())
+                state["active"].remove(idx)
+                state["completed"].append(idx)
                 if len(state["active"]) == 0 and len(state["completed"]) == len(data):
-                    com.unlink()
+                    if remove_com:
+                        com.unlink()
                     return
+                
+                com.write_text(json.dumps(state))
