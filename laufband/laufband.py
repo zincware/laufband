@@ -11,7 +11,6 @@ from laufband.db import LaufbandDB
 _T = t.TypeVar("_T")
 
 class LaufbandGenerator:
-    CLOSE_TRIGGER = False
 
     def __init__(
         self,
@@ -78,6 +77,8 @@ class LaufbandGenerator:
         self.kwargs = kwargs
         self.db = self._get_db_instance()
 
+        self._close_trigger = False
+
     def _get_db_instance(self) -> LaufbandDB:
         """Initialize the database instance."""
         if callable(self.identifier):
@@ -93,7 +94,7 @@ class LaufbandGenerator:
         Instead, you can use this function to exit
         the laufband generator marking the job as completed.
         """
-        self.CLOSE_TRIGGER = True
+        self._close_trigger = True
 
     def __iter__(self) -> Generator[_T, None, None]:
         """The generator that handles the iteration logic."""
@@ -141,8 +142,8 @@ class LaufbandGenerator:
                         self.com.unlink()
                     return
 
-            if self.CLOSE_TRIGGER:
-                self.CLOSE_TRIGGER = False
+            if self._close_trigger:
+                self._close_trigger = False
                 break
 
 
