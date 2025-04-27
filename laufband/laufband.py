@@ -46,18 +46,17 @@ class Laufband:
         >>> import json
         >>> import time
         >>> from pathlib import Path
-        >>> from flufl.lock import Lock
         >>> from laufband import Laufband
         ...
         >>> output_file = Path("data.json")
         >>> output_file.write_text(json.dumps({"processed_data": []}))
         >>> data = list(range(100))
-        >>> lock = Lock("laufband.lock")
+        >>> worker = Laufband(data, lock=lock, desc="using Laufband")
         ...
-        >>> for item in Ldata, lock=lock, desc="using Laufband"):
+        >>> for item in worker:
         ...    # Simulate some computationally intensive task
         ...    time.sleep(0.1)
-        ...    with lock:
+        ...    with worker.lock:
         ...        # Access and modify a shared resource (e.g., a file) safely using the lock
         ...        file_content = json.loads(output_file.read_text())
         ...        file_content["processed_data"].append(item)
