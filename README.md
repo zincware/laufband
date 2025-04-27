@@ -64,3 +64,39 @@ for i in {1..10} ; do python main.py & done
 > [!IMPORTANT]
 > The different processes may finish at different times. Therefore, the order of items in `file_content` is not guaranteed.
 > If the order is important, you will need to implement sorting logic afterwards.
+
+### Failure Policy
+
+In Laufband, a job will be automatically marked as failed if the iteration is interrupted by:
+- an unhandled Exception
+- or an explicit break.
+
+Examples:
+```python
+from laufband import laufband
+
+data = list(range(100))
+
+# Example 1: break
+for item in laufband(data):
+    if item == 50:
+        break  # Job 50 will be marked as failed
+
+# Example 2: Exception
+for item in laufband(data):
+    if item == 70:
+        raise ValueError("Something went wrong")  # Job 70 will be marked as failed
+```
+
+If you want to exit early but still mark the job as successfully completed,
+you should use laufband.close() instead of break:
+
+```python
+from laufband import laufband, close
+
+data = list(range(100))
+
+for item in laufband(data):
+    if item == 50:
+        close()  # Job 50 will be marked as completed, and iteration will stop cleanly
+```
