@@ -71,7 +71,6 @@ In Laufband, a job will be automatically marked as failed if the iteration is in
 - an unhandled Exception
 - or an explicit break.
 
-Examples:
 ```python
 from laufband import laufband
 
@@ -99,4 +98,39 @@ data = list(range(100))
 for item in laufband(data):
     if item == 50:
         close()  # Job 50 will be marked as completed, and iteration will stop cleanly
+```
+
+
+# Examples
+
+## ASE Calculator
+For atomistic data, the ASE package is widely used to calculate energies and forces of atomic configurations using either _ab initio_ methods or machine-learned interatomic potentials (MLIPs).
+
+You can use Laufband to parallelize these calculations easily without duplication or manual bookkeeping and automatic checkpointing.
+
+The following example uses a MACE foundation model to compute energies and forces on the ASE S22 dataset.
+
+> [!TIP]
+> You can safely run this script multiple times — even across multiple SLURM jobs — without any modifications.
+> Laufband will automatically coordinate which configurations are processed.
+> For local parallelization, you can use bash: `for i in {1..10} ; do python main.py & done`
+
+```python
+import ase.io
+from ase.collections import s22
+from flufl.lock import Lock
+from laufband import laufband
+from mace.calculators import mace_mp
+
+# Initialize calculator
+calc = mace_mp(model="medium", dispersion=False, default_dtype="float32")
+
+# File lock to safely update shared resources (like output files)
+lock = Lock("laufband.lock")
+
+for atoms in laufband(list(s22), lock=lock):
+    atoms.calc = calc
+    atoms.get_potential_energy()
+    with lock:
+        ase.io.write("frames.xyz", atoms, append=True)
 ```

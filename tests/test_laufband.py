@@ -20,7 +20,7 @@ def test_iter_default(tmp_path):
 
     com_file = tmp_path / "laufband.sqlite"
 
-    for point in laufband(data):
+    for point in laufband(data, cleanup=True):
         filecontent = json.loads(output.read_text())
         filecontent["data"].append(point)
         output.write_text(json.dumps(filecontent))
