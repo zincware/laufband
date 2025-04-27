@@ -80,7 +80,7 @@ def test_worker(tmp_path):
 def test_multiprocessing_pool(tmp_path):
     """Test laufband using a multiprocessing pool."""
     lock_path = tmp_path / "ptqdm.lock"
-    com_path = tmp_path / "laufband.json"
+    db_path = tmp_path / "laufband.sqlite"
     output_path = tmp_path / "data.json"
     num_processes = 4  # Let's use a pool of 4 workers
     total_iterations = 100
@@ -92,7 +92,7 @@ def test_multiprocessing_pool(tmp_path):
     # Create a multiprocessing pool
     with multiprocessing.Pool(processes=num_processes) as pool:
         # Prepare arguments for each worker
-        tasks = [(lock_path, com_path, output_path, key) for key in keys]
+        tasks = [(lock_path, db_path, output_path, key) for key in keys]
         # Apply the worker function asynchronously to the tasks
         pool.starmap(worker, tasks)
 
