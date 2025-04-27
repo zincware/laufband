@@ -1,6 +1,6 @@
 [project]
 name = "laufband"
-version = "0.1.1"
+version = "0.1.2"
 description = "Parallel Iteration with File-Based Coordination"
 authors = [
     { name = "Fabian Zills", email = "fzills@icp.uni-stuttgart.de" },
@@ -19,6 +19,14 @@ dev = [
     "pytest>=8.3.5",
     "ruff>=0.11.7",
     "pytest-cov>=6.1.1",
+    "pytest-xdist>=3.6.1",
+]
+
+atomic = [
+    "ase>=3.25.0",
+    "mace-torch>=0.3.12",
+    "rdkit2ase>=0.1.4",
+    "znh5md>=0.4.4",
 ]
 
 [build-system]
