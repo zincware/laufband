@@ -111,13 +111,13 @@ def test_resume_progress(tmp_path):
     """Test if laufband can resume from partial progress."""
     lock = Lock("ptqdm.lock")
     data = list(range(10))
-    com = tmp_path / "laufband.json"
-    db = LaufbandDB(com)
+    db_path = tmp_path / "laufband.sqlite"
+    db = LaufbandDB(db_path)
 
     output = tmp_path / "data.json"
     output.write_text(json.dumps({"data": []}))
 
-    for idx, point in enumerate(laufband(data, lock, com)):
+    for idx, point in enumerate(laufband(data, lock, db_path)):
         with lock:
             filecontent = json.loads(output.read_text())
             filecontent["data"].append(point)
@@ -133,7 +133,7 @@ def test_resume_progress(tmp_path):
     assert db.list_state("pending") == list(range(6, 10))
 
     # resume processing
-    for point in laufband(data, lock, com):
+    for point in laufband(data, lock, db_path):
         with lock:
             filecontent = json.loads(output.read_text())
             filecontent["data"].append(point)
