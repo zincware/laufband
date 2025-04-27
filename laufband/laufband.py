@@ -79,6 +79,11 @@ def laufband(
         size = len(data)
         if not com.exists():
             db.create(size)
+        else:
+            if len(data) != len(db):
+                raise ValueError(
+                    "The size of the data does not match the size of the database."
+                )
     tbar = tqdm(total=size, **kwargs)
     while True:
         with lock:

@@ -180,3 +180,16 @@ def test_failed_via_break(tmp_path):
     assert db.list_state("completed") == list(range(50))
     assert db.list_state("failed") == [50]
     assert db.list_state("pending") == list(range(51, 100))
+
+
+def test_inconsistent_db(tmp_path):
+    """Test if laufband can handle inconsistent database."""
+    db = LaufbandDB(tmp_path / "laufband1.sqlite")
+
+    for i in laufband(list(range(10)), com=db.db_path):
+        pass
+    
+    # same database, different size is not allowed
+    with pytest.raises(ValueError, match="The size of the data does not match the size of the database."):
+        for i in laufband(list(range(100)), com=db.db_path):
+            pass
