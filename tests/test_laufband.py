@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from flufl.lock import Lock
 
-from laufband import laufband
+from laufband import Laufband
 from laufband.db import LaufbandDB
 
 
@@ -20,7 +20,7 @@ def test_iter_default(tmp_path):
 
     com_file = tmp_path / "laufband.sqlite"
 
-    for point in laufband(data, cleanup=True):
+    for point in Laufband(data, cleanup=True):
         filecontent = json.loads(output.read_text())
         filecontent["data"].append(point)
         output.write_text(json.dumps(filecontent))
@@ -39,7 +39,7 @@ def test_iter(tmp_path):
     output = tmp_path / "data.json"
     output.write_text(json.dumps({"data": []}))
 
-    for point in laufband(data, lock, db.db_path):
+    for point in Laufband(data, lock, db.db_path):
         with lock:
             filecontent = json.loads(output.read_text())
             filecontent["data"].append(point)
@@ -53,7 +53,7 @@ def test_iter(tmp_path):
 def worker(lock_path: Path, com_path: Path, output_path: Path, name):
     lock = Lock(str(lock_path))
     data = list(range(100))
-    for point in laufband(data, lock, com_path):
+    for point in Laufband(data, lock, com_path):
         with lock:
             filecontent = json.loads(output_path.read_text())
             filecontent[name].append(point)
@@ -117,7 +117,7 @@ def test_resume_progress(tmp_path):
     output = tmp_path / "data.json"
     output.write_text(json.dumps({"data": []}))
 
-    pbar = laufband(data, lock, db_path)
+    pbar = Laufband(data, lock, db_path)
 
     for idx, point in enumerate(pbar):
         with lock:
@@ -135,7 +135,7 @@ def test_resume_progress(tmp_path):
     assert db.list_state("pending") == list(range(6, 10))
 
     # resume processing
-    for point in laufband(data, lock, db_path):
+    for point in Laufband(data, lock, db_path):
         with lock:
             filecontent = json.loads(output.read_text())
             filecontent["data"].append(point)
@@ -155,7 +155,7 @@ def test_failed(tmp_path):
 
     with pytest.raises(ValueError):
         data = list(range(100))
-        for idx, item in enumerate(laufband(data, com=com)):
+        for idx, item in enumerate(Laufband(data, com=com)):
             # Process each item in the dataset
             if idx == 50:
                 print("raising error")
@@ -173,7 +173,7 @@ def test_failed_via_break(tmp_path):
     db = LaufbandDB(com)
 
     data = list(range(100))
-    for idx, item in enumerate(laufband(data, com=com)):
+    for idx, item in enumerate(Laufband(data, com=com)):
         # Process each item in the dataset
         if idx == 50:
             break
@@ -188,7 +188,7 @@ def test_inconsistent_db(tmp_path):
     """Test if laufband can handle inconsistent database."""
     db = LaufbandDB(tmp_path / "laufband1.sqlite")
 
-    for i in laufband(list(range(10)), com=db.db_path):
+    for i in Laufband(list(range(10)), com=db.db_path):
         pass
 
     # same database, different size is not allowed
@@ -196,7 +196,7 @@ def test_inconsistent_db(tmp_path):
         ValueError,
         match="The size of the data does not match the size of the database.",
     ):
-        for i in laufband(list(range(100)), com=db.db_path):
+        for i in Laufband(list(range(100)), com=db.db_path):
             pass
 
 
@@ -207,17 +207,17 @@ def test_identifier(tmp_path):
     com = tmp_path / "laufband.sqlite"
     db = LaufbandDB(com)
 
-    pbar = laufband(data, lock, com, identifier="worker_1")
+    pbar = Laufband(data, lock, com, identifier="worker_1")
 
     for idx in pbar:
         if idx == 50:
             pbar.close()
 
-    pbar = laufband(data, lock, com, identifier="worker_2")
+    pbar = Laufband(data, lock, com, identifier="worker_2")
     for idx in pbar:
         if idx == 75:
             pbar.close()
-    for idx in laufband(data, lock, com, identifier=None):
+    for idx in Laufband(data, lock, com, identifier=None):
         pass
 
     for idx in range(51):

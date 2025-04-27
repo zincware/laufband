@@ -10,7 +10,7 @@ from laufband.db import LaufbandDB
 
 _T = t.TypeVar("_T")
 
-class LaufbandGenerator:
+class Laufband:
 
     def __init__(
         self,
@@ -47,14 +47,14 @@ class LaufbandGenerator:
         >>> import time
         >>> from pathlib import Path
         >>> from flufl.lock import Lock
-        >>> from laufband import laufband
+        >>> from laufband import Laufband
         ...
         >>> output_file = Path("data.json")
         >>> output_file.write_text(json.dumps({"processed_data": []}))
         >>> data = list(range(100))
         >>> lock = Lock("laufband.lock")
         ...
-        >>> for item in laufband(data, lock=lock, desc="using Laufband"):
+        >>> for item in Ldata, lock=lock, desc="using Laufband"):
         ...    # Simulate some computationally intensive task
         ...    time.sleep(0.1)
         ...    with lock:
@@ -145,45 +145,3 @@ class LaufbandGenerator:
             if self._close_trigger:
                 self._close_trigger = False
                 break
-
-
-def laufband(
-    data: Sequence[_T],
-    lock: Lock | None = None,
-    com: Path | str | None = None,
-    identifier: str | t.Callable | None = os.getpid,
-    cleanup: bool = False,
-    **kwargs,
-) -> LaufbandGenerator:
-    """Create a Laufband generator for parallel processing.
-
-    Arguments
-    ---------
-    data : Sequence
-        The data to process. Any object implementing ``__len__`` and ``__getitem__`` if supported.
-    lock : Lock | None
-        A lock object to ensure thread safety. If None, a new lock will be created.
-    com : Path | None
-        The path to the db file used to store the state. If given, the file will not be removed.
-        If not provided, a file named "laufband.sqlite" will be used and removed after completion.
-    identifier : str | callable, optional
-        A unique identifier for the worker. If not set, the process ID will be used.
-        If a callable is provided, it will be called to generate the identifier.
-    cleanup : bool
-        If True, the database file will be removed after processing is complete.
-    kwargs : dict
-        Additional arguments to pass to tqdm.
-
-    Returns
-    -------
-    LaufbandGenerator
-        An instance of LaufbandGenerator for parallel processing.
-    """
-    return LaufbandGenerator(
-        data=data,
-        lock=lock,
-        com=com,
-        identifier=identifier,
-        cleanup=cleanup,
-        **kwargs,
-    )

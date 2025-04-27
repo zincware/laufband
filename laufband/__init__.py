@@ -1,6 +1,6 @@
 import importlib.metadata
 
-from laufband.laufband import laufband
+from laufband.laufband import Laufband
 
-__all__ = ["laufband"]
+__all__ = ["Laufband"]
 __version__ = importlib.metadata.version("laufband")

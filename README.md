@@ -21,10 +21,10 @@ pip install laufband
 Using Laufband is similar to the familiar `tqdm` progress bar for sequential iteration.
 
 ```python
-from laufband import laufband
+from laufband import Laufband
 
 data = list(range(100))
-for item in laufband(data):
+for item in Laufband(data):
     # Process each item in the dataset
     pass
 ```
@@ -38,14 +38,14 @@ import json
 import time
 from pathlib import Path
 from flufl.lock import Lock
-from laufband import laufband
+from laufband import Laufband
 
 output_file = Path("data.json")
 output_file.write_text(json.dumps({"processed_data": []}))
 data = list(range(100))
 lock = Lock("laufband.lock")
 
-for item in laufband(data, lock=lock, desc="using Laufband"):
+for item in Laufband(data, lock=lock, desc="using Laufband"):
     # Simulate some computationally intensive task
     time.sleep(0.1)
     with lock:
@@ -72,17 +72,17 @@ In Laufband, a job will be automatically marked as failed if the iteration is in
 - or an explicit break.
 
 ```python
-from laufband import laufband
+from laufband import Laufband
 
 data = list(range(100))
 
 # Example 1: break
-for item in laufband(data):
+for item in Laufband(data):
     if item == 50:
         break  # Job 50 will be marked as failed
 
 # Example 2: Exception
-for item in laufband(data):
+for item in Laufband(data):
     if item == 70:
         raise ValueError("Something went wrong")  # Job 70 will be marked as failed
 ```
@@ -91,13 +91,15 @@ If you want to exit early but still mark the job as successfully completed,
 you should use laufband.close() instead of break:
 
 ```python
-from laufband import laufband, close
+from laufband import Laufband
 
 data = list(range(100))
 
-for item in laufband(data):
+pbar = Laufband(data)
+
+for item in pbad:
     if item == 50:
-        close()  # Job 50 will be marked as completed, and iteration will stop cleanly
+        pbar.close()  # Job 50 will be marked as completed, and iteration will stop cleanly
 ```
 
 
@@ -119,18 +121,17 @@ The following example uses a MACE foundation model to compute energies and force
 import ase.io
 from ase.collections import s22
 from flufl.lock import Lock
-from laufband import laufband
+from laufband import Laufband
 from mace.calculators import mace_mp
 
 # Initialize calculator
 calc = mace_mp(model="medium", dispersion=False, default_dtype="float32")
 
-# File lock to safely update shared resources (like output files)
-lock = Lock("laufband.lock")
+pbar = Laufband(list(s22)):
 
-for atoms in laufband(list(s22), lock=lock):
+for atoms in pbar
     atoms.calc = calc
     atoms.get_potential_energy()
-    with lock:
+    with pbar.lock:
         ase.io.write("frames.xyz", atoms, append=True)
 ```
