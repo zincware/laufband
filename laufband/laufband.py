@@ -30,6 +30,7 @@ def laufband(
     lock: Lock | None = None,
     com: Path | str | None = None,
     identifier: str | t.Callable | None = os.getpid,
+    cleanup: bool = False,
     **kwargs,
 ) -> Generator[_T, None, None]:
     """Laufband generator for parallel processing using file-based locking.
@@ -47,6 +48,8 @@ def laufband(
     identifier : str | callable, optional
         A unique identifier for the worker. If not set, the process ID will be used.
         If a callable is provided, it will be called to generate the identifier.
+    cleanup : bool
+        If True, the database file will be removed after processing is complete.
     kwargs : dict
         Additional arguments to pass to tqdm.
 
@@ -74,7 +77,6 @@ def laufband(
 
     """
     global CLOSE_TRIGGER
-    remove_com = com is None
     if com is None:
         com = Path("laufband.sqlite")
     if lock is None:
@@ -124,7 +126,7 @@ def laufband(
             db.finalize(idx, "completed")
             completed = db.list_state("completed")
             if len(completed) == size:
-                if remove_com:
+                if cleanup:
                     com.unlink()
                 return
 
