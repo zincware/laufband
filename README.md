@@ -37,18 +37,18 @@ Here's a typical example demonstrating parallel processing with Laufband and fil
 import json
 import time
 from pathlib import Path
-from flufl.lock import Lock
 from laufband import Laufband
 
 output_file = Path("data.json")
 output_file.write_text(json.dumps({"processed_data": []}))
 data = list(range(100))
-lock = Lock("laufband.lock")
 
-for item in Laufband(data, lock=lock, desc="using Laufband"):
+worker = Laufband(data, desc="using Laufband")
+
+for item in worker:
     # Simulate some computationally intensive task
     time.sleep(0.1)
-    with lock:
+    with worker.lock:
         # Access and modify a shared resource (e.g., a file) safely using the lock
         file_content = json.loads(output_file.read_text())
         file_content["processed_data"].append(item)
@@ -88,18 +88,18 @@ for item in Laufband(data):
 ```
 
 If you want to exit early but still mark the job as successfully completed,
-you should use laufband.close() instead of break:
+you should use `Laufband.close()` instead of `break`:
 
 ```python
 from laufband import Laufband
 
 data = list(range(100))
 
-pbar = Laufband(data)
+worker = Laufband(data)
 
-for item in pbad:
+for item in worker:
     if item == 50:
-        pbar.close()  # Job 50 will be marked as completed, and iteration will stop cleanly
+        worker.close()  # Job 50 will be marked as completed, and iteration will stop cleanly
 ```
 
 
@@ -120,18 +120,17 @@ The following example uses a MACE foundation model to compute energies and force
 ```python
 import ase.io
 from ase.collections import s22
-from flufl.lock import Lock
 from laufband import Laufband
 from mace.calculators import mace_mp
 
 # Initialize calculator
 calc = mace_mp(model="medium", dispersion=False, default_dtype="float32")
 
-pbar = Laufband(list(s22)):
+worker = Laufband(list(s22))
 
-for atoms in pbar
+for atoms in worker:
     atoms.calc = calc
     atoms.get_potential_energy()
-    with pbar.lock:
+    with worker.lock:
         ase.io.write("frames.xyz", atoms, append=True)
 ```
