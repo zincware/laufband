@@ -8,10 +8,10 @@ from tqdm import tqdm
 
 from laufband.db import LaufbandDB
 
-_T = t.TypeVar("_T")
+_T = t.TypeVar("_T", covariant=True)
 
 
-class Laufband:
+class Laufband(t.Generic[_T]):
     def __init__(
         self,
         data: Sequence[_T],
@@ -66,24 +66,14 @@ class Laufband:
         self.data = data
         self.lock = lock if lock is not None else Lock("laufband.lock")
         self.com = Path(com or "laufband.sqlite")
-        if identifier is None:
-            self.identifier = None
-        elif callable(identifier):
-            self.identifier = identifier
+        if callable(identifier):
+            self.db = LaufbandDB(self.com, worker=identifier())
         else:
-            self.identifier = identifier
+            self.db = LaufbandDB(self.com, worker=identifier)
         self.cleanup = cleanup
         self.kwargs = kwargs
-        self.db = self._get_db_instance()
 
         self._close_trigger = False
-
-    def _get_db_instance(self) -> LaufbandDB:
-        """Initialize the database instance."""
-        if callable(self.identifier):
-            return LaufbandDB(self.com, worker=self.identifier())
-        else:
-            return LaufbandDB(self.com, worker=self.identifier)
 
     def close(self):
         """Exit out of the laufband generator.
@@ -97,9 +87,8 @@ class Laufband:
 
     def __iter__(self) -> Generator[_T, None, None]:
         """The generator that handles the iteration logic."""
-        size = len(self.data)
-
         with self.lock:
+            size = len(self.data)
             if not self.com.exists():
                 self.db.create(size)
             else:
@@ -125,7 +114,6 @@ class Laufband:
             try:
                 yield self.data[idx]
             except GeneratorExit:
-                # Handle generator exit
                 with self.lock:
                     self.db.finalize(idx, "failed")
                 raise
