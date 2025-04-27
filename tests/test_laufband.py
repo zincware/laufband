@@ -209,10 +209,15 @@ def test_identifier(tmp_path):
         if idx == 50:
             close()
 
-    for idx in laufband(data, lock, com, identifier="worker_2"):
+    for idx in laufband(data, lock, com, identifier=lambda: "worker_2"):
+        if idx == 75:
+            close()
+    for idx in laufband(data, lock, com, identifier=None):
         pass
 
     for idx in range(51):
         assert db.get_worker(idx) == "worker_1"
-    for idx in range(51, 100):
+    for idx in range(51, 76):
         assert db.get_worker(idx) == "worker_2"
+    for idx in range(76, 100):
+        assert db.get_worker(idx) is None
