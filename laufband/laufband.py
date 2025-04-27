@@ -22,17 +22,18 @@ class LaufbandGenerator:
         cleanup: bool = False,
         **kwargs,
     ):
-        """Initialize the LaufbandGenerator for parallel processing using file-based locking.
+        """Laufband generator for parallel processing using file-based locking.
 
         Arguments
         ---------
         data : Sequence
-            The data to process. Any object implementing ``__len__`` and ``__getitem__`` if supported.
+            The data to process. Any object implementing ``__len__`` and ``__getitem__``
+            if supported.
         lock : Lock | None
             A lock object to ensure thread safety. If None, a new lock will be created.
-        com : Path | None
+        com : Path | str | None
             The path to the db file used to store the state. If given, the file will not be removed.
-        If not provided, a file named "laufband.sqlite" will be used and removed after completion.
+            If not provided, a file named "laufband.sqlite" will be used and removed after completion.
         identifier : str | callable, optional
             A unique identifier for the worker. If not set, the process ID will be used.
             If a callable is provided, it will be called to generate the identifier.
@@ -40,6 +41,29 @@ class LaufbandGenerator:
             If True, the database file will be removed after processing is complete.
         kwargs : dict
             Additional arguments to pass to tqdm.
+
+        Example
+        -------
+        >>> import json
+        >>> import time
+        >>> from pathlib import Path
+        >>> from flufl.lock import Lock
+        >>> from laufband import laufband
+        ...
+        >>> output_file = Path("data.json")
+        >>> output_file.write_text(json.dumps({"processed_data": []}))
+        >>> data = list(range(100))
+        >>> lock = Lock("laufband.lock")
+        ...
+        >>> for item in laufband(data, lock=lock, desc="using Laufband"):
+        ...    # Simulate some computationally intensive task
+        ...    time.sleep(0.1)
+        ...    with lock:
+        ...        # Access and modify a shared resource (e.g., a file) safely using the lock
+        ...        file_content = json.loads(output_file.read_text())
+        ...        file_content["processed_data"].append(item)
+        ...        output_file.write_text(json.dumps(file_content))
+
         """
         self.data = data
         self.lock = lock if lock is not None else Lock("laufband.lock")
@@ -62,7 +86,13 @@ class LaufbandGenerator:
             return LaufbandDB(self.com, worker=self.identifier)
 
     def close(self):
-        """Exit out of the laufband generator, marking the job as completed."""
+        """Exit out of the laufband generator.
+
+        If you use ``break`` inside a laufband loop,
+        it will be registered as a failed job.
+        Instead, you can use this function to exit
+        the laufband generator marking the job as completed.
+        """
         self.CLOSE_TRIGGER = True
 
     def __iter__(self) -> Generator[_T, None, None]:
