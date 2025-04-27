@@ -5,12 +5,13 @@ from pathlib import Path
 
 from flufl.lock import Lock
 from tqdm import tqdm
+from laufband.db import LaufbandDB
 
 _T = t.TypeVar("_T")
 
 
 def laufband(
-    data: Sequence[_T], lock: Lock | None = None, com: Path | None = None, **kwargs
+    data: Sequence[_T], lock: Lock | None = None, com: Path |str| None = None, **kwargs
 ) -> Generator[_T, None, None]:
     """Laufband generator for parallel processing using file-based locking.
 
@@ -22,8 +23,8 @@ def laufband(
     lock : Lock | None
         A lock object to ensure thread safety. If None, a new lock will be created.
     com : Path | None
-        The path to the JSON file used to store the state. If None, a new file will be created.
-        If not provided, a file named "laufband.json" will be used and removed after completion.
+        The path to the db file used to store the state. If given, the file will not be removed.
+        If not provided, a file named "laufband.sqlite" will be used and removed after completion.
     kwargs : dict
         Additional arguments to pass to tqdm.
 
@@ -52,29 +53,38 @@ def laufband(
     """
     remove_com = com is None
     if com is None:
-        com = Path("laufband.json")
+        com = Path("laufband.sqlite")
     if lock is None:
         lock = Lock("laufband.lock")
-    if not com.exists():
-        com.write_text(json.dumps({"active": [], "completed": []}))
-    tbar = tqdm(total=len(data), **kwargs)
+    db = LaufbandDB(com)
+    with lock:
+        size = len(data)
+        if not com.exists():
+            db.create(size)
+    tbar = tqdm(total=size, **kwargs)
     while True:
         with lock:
-            state = json.loads(com.read_text())
-            # find the next index to process
-            for idx in range(len(data)):
-                if idx not in state["active"] + state["completed"]:
-                    state["active"].append(idx)
-                    com.write_text(json.dumps(state))
-                    break
-            else:
-                # No more work left
-                tbar.n = len(state["completed"])
-                tbar.refresh()
-                return
+            completed = db.list_state("completed")
+            try:
+                idx = next(db)
+            except StopIteration:
+                # No more items to process
+                break
+            # state = json.loads(com.read_text())
+            # # find the next index to process
+            # for idx in range(len(data)):
+            #     if idx not in state["active"] + state["completed"]:
+            #         state["active"].append(idx)
+            #         com.write_text(json.dumps(state))
+            #         break
+            # else:
+            #     # No more work left
+            #     tbar.n = len(state["completed"])
+            #     tbar.refresh()
+            #     return
 
         # Update progress bar for completed items
-        tbar.n = len(state["completed"])
+        tbar.n = len(completed)
         tbar.refresh()
 
         try:
@@ -83,12 +93,14 @@ def laufband(
             tbar.update(1)
             with lock:
                 # After processing, mark as completed
-                state = json.loads(com.read_text())
-                state["active"].remove(idx)
-                state["completed"].append(idx)
-                if len(state["active"]) == 0 and len(state["completed"]) == len(data):
+                db.finalize(idx, "completed")
+                completed = db.list_state("completed")
+                # state = json.loads(com.read_text())
+                # state["active"].remove(idx)
+                # state["completed"].append(idx)
+                if len(completed) == size:
                     if remove_com:
                         com.unlink()
                     return
                 
-                com.write_text(json.dumps(state))
+                # com.write_text(json.dumps(state))

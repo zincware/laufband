@@ -7,6 +7,7 @@ from pathlib import Path
 from flufl.lock import Lock
 
 from laufband import laufband
+from laufband.db import LaufbandDB
 
 
 def test_iter_default(tmp_path):
@@ -16,7 +17,7 @@ def test_iter_default(tmp_path):
     output.write_text(json.dumps({"data": []}))
     data = list(range(100))
 
-    com_file = tmp_path / "laufband.json"
+    com_file = tmp_path / "laufband.sqlite"
 
     for point in laufband(data):
         filecontent = json.loads(output.read_text())
@@ -32,17 +33,17 @@ def test_iter_default(tmp_path):
 def test_iter(tmp_path):
     lock = Lock("ptqdm.lock")
     data = list(range(100))
-    com = tmp_path / "laufband.json"
+    db = LaufbandDB(tmp_path / "laufband.sqlite")
 
     output = tmp_path / "data.json"
     output.write_text(json.dumps({"data": []}))
 
-    for point in laufband(data, lock, com):
+    for point in laufband(data, lock, db.db_path):
         with lock:
             filecontent = json.loads(output.read_text())
             filecontent["data"].append(point)
             output.write_text(json.dumps(filecontent))
-            assert len(json.loads(com.read_text())["active"]) == 1
+            assert db.list_state("running") == [point]
 
     results = json.loads(output.read_text())["data"]
     assert results == data
@@ -62,7 +63,7 @@ def worker(lock_path: Path, com_path: Path, output_path: Path, name):
 def test_worker(tmp_path):
     """Test worker function."""
     lock_path = tmp_path / "ptqdm.lock"
-    com_path = tmp_path / "laufband.json"
+    com_path = tmp_path / "laufband.sqlite"
     output_path = tmp_path / "data.json"
 
     # Setup files
@@ -110,6 +111,7 @@ def test_resume_progress(tmp_path):
     lock = Lock("ptqdm.lock")
     data = list(range(10))
     com = tmp_path / "laufband.json"
+    db = LaufbandDB(com)
 
     output = tmp_path / "data.json"
     output.write_text(json.dumps({"data": []}))
@@ -124,8 +126,10 @@ def test_resume_progress(tmp_path):
             break
 
     assert len(json.loads(output.read_text())["data"]) == 6
-    assert len(json.loads(com.read_text())["active"]) == 0
-    assert len(json.loads(com.read_text())["completed"]) == 6
+    assert db.list_state("running") == []
+    assert db.list_state("completed") == list(range(6))
+    assert db.list_state("failed") == []
+    assert db.list_state("pending") == list(range(6, 10))
 
     # resume processing
     for point in laufband(data, lock, com):
@@ -134,6 +138,8 @@ def test_resume_progress(tmp_path):
             filecontent["data"].append(point)
             output.write_text(json.dumps(filecontent))
 
-    assert len(json.loads(com.read_text())["completed"]) == 10
     assert len(json.loads(output.read_text())["data"]) == 10
-    assert len(json.loads(com.read_text())["active"]) == 0
+    assert db.list_state("running") == []
+    assert db.list_state("completed") == list(range(10))
+    assert db.list_state("failed") == []
+    assert db.list_state("pending") == []
