@@ -3,7 +3,7 @@
 ![Logo](https://github.com/user-attachments/assets/c8d2a3f9-284b-474d-b46d-98612c9d266b)
 </div>
 
-# Laufband: Parallel Iteration with File-Based Coordination
+# Laufband: Embarrassingly parallel, embarrassingly simple!
 [![codecov](https://codecov.io/gh/zincware/laufband/graph/badge.svg?token=9DJ3YZGTBA)](https://codecov.io/gh/zincware/laufband)
 
 Laufband enables parallel iteration over a dataset from multiple processes, utilizing file-based locking and communication to ensure each item is processed exactly once.
