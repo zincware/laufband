@@ -190,7 +190,6 @@ def test_failed_via_break(tmp_path):
     assert pbar.pending == list(range(51, 100))
 
 
-
 def test_inconsistent_db(tmp_path):
     """Test if laufband can handle inconsistent database."""
     db = LaufbandDB(tmp_path / "laufband1.sqlite")
@@ -248,6 +247,7 @@ def test_iter_access_lock(tmp_path):
             assert pbar.lock.is_locked
     assert not pbar.lock.is_locked
 
+
 def test_iter_finished(tmp_path):
     """Test if iter finished works."""
     os.chdir(tmp_path)
@@ -259,8 +259,9 @@ def test_iter_finished(tmp_path):
             assert len(pbar.completed) == 50
             assert len(pbar.running) == 1
             assert len(pbar.pending) == 49
-            
+
     assert len(pbar.completed) == len(pbar)
+
 
 def test_iter_len(tmp_path):
     """Test if iter len works."""
