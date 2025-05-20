@@ -87,25 +87,25 @@ class Laufband(t.Generic[_T]):
 
     @property
     def completed(self) -> list[int]:
-        """Check if the laufband generator has finished processing."""
+        """Return the indices of items that have been completed."""
         with self.lock:
             return self.db.list_state("completed")
         
     @property
     def failed(self) -> list[int]:
-        """Check if the laufband generator has failed processing."""
+        """Return the indices of items that have failed processing."""
         with self.lock:
             return self.db.list_state("failed")
         
     @property
     def running(self) -> list[int]:
-        """Check if the laufband generator is currently running."""
+        """Return the indices of items that are currently being processed."""
         with self.lock:
             return self.db.list_state("running")
         
     @property
     def pending(self) -> list[int]:
-        """Check if the laufband generator is currently pending."""
+        """Return the indices of items that are pending processing."""
         with self.lock:
             return self.db.list_state("pending")
         
