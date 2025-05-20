@@ -173,7 +173,8 @@ def test_failed_via_break(tmp_path):
     db = LaufbandDB(com)
 
     data = list(range(100))
-    for idx, item in enumerate(Laufband(data, com=com)):
+    pbar = Laufband(data, com=com)
+    for idx, item in enumerate(pbar):
         # Process each item in the dataset
         if idx == 50:
             break
@@ -182,6 +183,11 @@ def test_failed_via_break(tmp_path):
     assert db.list_state("completed") == list(range(50))
     assert db.list_state("failed") == [50]
     assert db.list_state("pending") == list(range(51, 100))
+
+    assert pbar.running == []
+    assert pbar.completed == list(range(50))
+    assert pbar.failed == [50]
+    assert pbar.pending == list(range(51, 100))
 
 
 def test_inconsistent_db(tmp_path):
@@ -240,3 +246,28 @@ def test_iter_access_lock(tmp_path):
         with pbar.lock:
             assert pbar.lock.is_locked
     assert not pbar.lock.is_locked
+
+
+def test_iter_finished(tmp_path):
+    """Test if iter finished works."""
+    os.chdir(tmp_path)
+    data = list(range(100))
+
+    pbar = Laufband(data)
+    for idx in pbar:
+        if idx == 50:
+            assert len(pbar.completed) == 50
+            assert len(pbar.running) == 1
+            assert len(pbar.pending) == 49
+
+    assert len(pbar.completed) == len(pbar)
+
+
+def test_iter_len(tmp_path):
+    """Test if iter len works."""
+    os.chdir(tmp_path)
+    pbar = Laufband(list(range(100)))
+    assert len(pbar) == 100
+
+    pbar = Laufband(list(range(50)))
+    assert len(pbar) == 50
