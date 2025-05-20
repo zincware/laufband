@@ -85,6 +85,35 @@ class Laufband(t.Generic[_T]):
         """
         self._close_trigger = True
 
+    @property
+    def completed(self) -> list[int]:
+        """Check if the laufband generator has finished processing."""
+        with self.lock:
+            return self.db.list_state("completed")
+        
+    @property
+    def failed(self) -> list[int]:
+        """Check if the laufband generator has failed processing."""
+        with self.lock:
+            return self.db.list_state("failed")
+        
+    @property
+    def running(self) -> list[int]:
+        """Check if the laufband generator is currently running."""
+        with self.lock:
+            return self.db.list_state("running")
+        
+    @property
+    def pending(self) -> list[int]:
+        """Check if the laufband generator is currently pending."""
+        with self.lock:
+            return self.db.list_state("pending")
+        
+    def __len__(self) -> int:
+        """Return the length of the data."""
+        with self.lock:
+            return len(self.data)
+
     def __iter__(self) -> Generator[_T, None, None]:
         """The generator that handles the iteration logic."""
         with self.lock:
