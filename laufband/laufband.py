@@ -3,12 +3,63 @@ import typing as t
 from collections.abc import Generator, Sequence
 from pathlib import Path
 
+from rich.console import Console
+from rich.progress import Progress, BarColumn, TimeRemainingColumn, TextColumn
+
+
 from flufl.lock import Lock
 from tqdm import tqdm
 
 from laufband.db import LaufbandDB
 
+
+from rich.console import Console
+from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn
+from tqdm import tqdm
+from typing import Generator, Optional, Any
+
 _T = t.TypeVar("_T", covariant=True)
+
+
+class _SmartProgress:
+    def __init__(self, total: int, description: str = "Processing", **kwargs):
+        self.console = Console()
+        self.total = total
+        self.description = description
+        self._rich_task_id = None
+        self._is_rich = self.console.is_terminal
+        self._kwargs = kwargs
+
+        if self._is_rich:
+            self._progress = Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                "[progress.percentage]{task.percentage:>3.0f}%",
+                TimeRemainingColumn(),
+                console=self.console,
+            )
+        else:
+            self._tqdm_bar = tqdm(total=total, desc=description, **kwargs)
+
+    def __enter__(self):
+        if self._is_rich:
+            self._progress.__enter__()
+            self._rich_task_id = self._progress.add_task(self.description, total=self.total)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._is_rich:
+            self._progress.__exit__(exc_type, exc_val, exc_tb)
+        else:
+            self._tqdm_bar.close()
+
+    def update(self, completed: int, worker: list[str]):
+        if self._is_rich:
+            self._progress.update(self._rich_task_id, completed=completed, description=f"{self.description} (1 / {len(worker)})")
+        else:
+            self._tqdm_bar.n = completed
+            self._tqdm_bar.refresh()
+
 
 
 class Laufband(t.Generic[_T]):
@@ -122,42 +173,35 @@ class Laufband(t.Generic[_T]):
                 self.db.create(size)
             else:
                 if len(self.data) != len(self.db):
-                    raise ValueError(
-                        "The size of the data does not match the size of the database."
-                    )
+                    raise ValueError("The size of the data does not match the size of the database.")
 
-        tbar = tqdm(total=size, **self.kwargs)
-        while True:
-            with self.lock:
-                completed = self.db.list_state("completed")
-                try:
-                    idx = next(self.db)
-                except StopIteration:
-                    # No more items to process
-                    break
-
-            # Update progress bar for completed items
-            tbar.n = len(completed)
-            tbar.refresh()
-
-            try:
-                yield self.data[idx]
-            except GeneratorExit:
+        with _SmartProgress(total=size, description="lalal") as progress:
+            while True:
                 with self.lock:
-                    self.db.finalize(idx, "failed")
-                raise
+                    completed = self.db.list_state("completed")
+                    worker = self.db.list_workers()
+                    try:
+                        idx = next(self.db)
+                    except StopIteration:
+                        break
 
-            tbar.update(1)
+                progress.update(len(completed), worker=worker)
 
-            with self.lock:
-                # After processing, mark as completed
-                self.db.finalize(idx, "completed")
-                completed = self.db.list_state("completed")
-                if len(completed) == size:
-                    if self.cleanup:
-                        self.com.unlink()
-                    return
+                try:
+                    yield self.data[idx]
+                except GeneratorExit:
+                    with self.lock:
+                        self.db.finalize(idx, "failed")
+                    raise
 
-            if self._close_trigger:
-                self._close_trigger = False
-                break
+                with self.lock:
+                    self.db.finalize(idx, "completed")
+                    completed = self.db.list_state("completed")
+                    if len(completed) == size:
+                        if self.cleanup:
+                            self.com.unlink()
+                        return
+
+                if self._close_trigger:
+                    self._close_trigger = False
+                    break

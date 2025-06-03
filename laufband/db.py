@@ -115,3 +115,15 @@ class LaufbandDB:
             )
             row = cursor.fetchone()
         return row[0] if row else None
+
+    def list_workers(self) -> list[str]:
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT DISTINCT worker FROM progress_table
+                WHERE worker IS NOT NULL
+                """,
+            )
+            rows = cursor.fetchall()
+        return [row[0] for row in rows]
