@@ -19,6 +19,7 @@ class Laufband(t.Generic[_T]):
         com: Path | str | None = None,
         identifier: str | t.Callable | None = os.getpid,
         cleanup: bool = False,
+        failure_policy: t.Literal["continue", "stop"] = "continue",
         **kwargs,
     ):
         """Laufband generator for parallel processing using file-based locking.
@@ -38,6 +39,11 @@ class Laufband(t.Generic[_T]):
             If a callable is provided, it will be called to generate the identifier.
         cleanup : bool
             If True, the database file will be removed after processing is complete.
+        failure_policy : str
+            If an error occurs, the generator will always yield that error.
+            With the "continue" policy, other processes will continue,
+            while with the "raise" policy, the other process will stop
+            and raise an exception that one process failed.
         kwargs : dict
             Additional arguments to pass to tqdm.
 
@@ -74,6 +80,7 @@ class Laufband(t.Generic[_T]):
         self.kwargs = kwargs
 
         self._close_trigger = False
+        self.failure_policy = failure_policy
 
     def close(self):
         """Exit out of the laufband generator.
@@ -130,6 +137,10 @@ class Laufband(t.Generic[_T]):
         while True:
             with self.lock:
                 completed = self.db.list_state("completed")
+
+                if self.failure_policy == "stop" and self.db.list_state("failed"):
+                    raise RuntimeError("Another worker has failed. Stopping due to failure_policy='stop'.")
+
                 try:
                     idx = next(self.db)
                 except StopIteration:
