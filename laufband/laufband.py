@@ -20,7 +20,7 @@ class Laufband(t.Generic[_T]):
         identifier: str | t.Callable = os.getpid,
         cleanup: bool = False,
         failure_policy: t.Literal["continue", "stop"] = "continue",
-        heartbeat_timeout: int = 60,
+        heartbeat_timeout: int | None = None,
         max_died_retries: int = 0,
         **kwargs,
     ):
@@ -52,6 +52,8 @@ class Laufband(t.Generic[_T]):
             in the last `heartbeat_timeout` seconds. This is used to mark jobs as "died" if the
             worker process is killed unexpectedly. Set to a value greater than what you expect
             the runtime of the longest iteration to be.
+            Defaults to 1 hour or the value of the environment variable
+            ``LAUFBAND_HEARTBEAT_TIMEOUT`` if set.
         max_died_retries : int
             The number of times to retry processing items that have been marked as "died".
         kwargs : dict
@@ -79,6 +81,8 @@ class Laufband(t.Generic[_T]):
         ...        output_file.write_text(json.dumps(file_content))
 
         """
+        if heartbeat_timeout is None:
+            heartbeat_timeout = int(os.getenv("LAUFBAND_HEARTBEAT_TIMEOUT", 60 * 60))
         self.data = data
         self.lock = lock if lock is not None else Lock("laufband.lock")
         self.com = Path(com or "laufband.sqlite")
