@@ -3,10 +3,12 @@ import typing as t
 from collections.abc import Generator, Sequence
 from pathlib import Path
 
-from flufl.lock import Lock
 from tqdm import tqdm
 
 from laufband.db import LaufbandDB
+
+from flufl.lock import Lock
+
 
 _T = t.TypeVar("_T", covariant=True)
 
@@ -17,9 +19,11 @@ class Laufband(t.Generic[_T]):
         data: Sequence[_T],
         lock: Lock | None = None,
         com: Path | str | None = None,
-        identifier: str | t.Callable | None = os.getpid,
+        identifier: str | t.Callable = os.getpid,
         cleanup: bool = False,
         failure_policy: t.Literal["continue", "stop"] = "continue",
+        kill_timeout: int = 60,
+        retry_died: int = 0,
         **kwargs,
     ):
         """Laufband generator for parallel processing using file-based locking.
@@ -37,6 +41,7 @@ class Laufband(t.Generic[_T]):
         identifier : str | callable, optional
             A unique identifier for the worker. If not set, the process ID will be used.
             If a callable is provided, it will be called to generate the identifier.
+            Must be unique across all workers.
         cleanup : bool
             If True, the database file will be removed after processing is complete.
         failure_policy : str
@@ -44,6 +49,13 @@ class Laufband(t.Generic[_T]):
             With the "continue" policy, other processes will continue,
             while with the "raise" policy, the other process will stop
             and raise an exception that one process failed.
+        kill_timeout : int
+            The timeout in seconds to consider a worker as dead if it has not been seen
+            in the last `kill_timeout` seconds. This is used to mark jobs as "died" if the
+            worker process is killed unexpectedly. Set to a value greater than what you expect
+            the runtime of the longest iteration to be.
+        retry_died : int
+            The number of times to retry processing items that have been marked as "died".
         kwargs : dict
             Additional arguments to pass to tqdm.
 
@@ -72,10 +84,14 @@ class Laufband(t.Generic[_T]):
         self.data = data
         self.lock = lock if lock is not None else Lock("laufband.lock")
         self.com = Path(com or "laufband.sqlite")
+
         if callable(identifier):
-            self.db = LaufbandDB(self.com, worker=identifier())
+            self.db = LaufbandDB(self.com, worker=identifier(), kill_timeout=kill_timeout, retry_died=retry_died)
+        elif identifier is None:
+            raise ValueError("Identifier must be a string or callable that returns a string.")
         else:
-            self.db = LaufbandDB(self.com, worker=identifier)
+            self.db = LaufbandDB(self.com, worker=identifier, kill_timeout=kill_timeout, retry_died=retry_died)
+
         self.cleanup = cleanup
         self.kwargs = kwargs
 
@@ -132,7 +148,7 @@ class Laufband(t.Generic[_T]):
                     raise ValueError(
                         "The size of the data does not match the size of the database."
                     )
-
+        # adapt tqdm to properly work with died jobs
         tbar = tqdm(total=size, **self.kwargs)
         while True:
             with self.lock:

@@ -2,17 +2,25 @@ import contextlib
 import sqlite3
 import typing as t
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+import os
 
-T_STATE = t.Literal["running", "pending", "failed", "completed"]
+T_STATE = t.Literal["running", "pending", "failed", "completed", "died"]
+# failed: the job failed with some exit code
+# died: the python process was killed and the worker could not update the 
+#       state of the job. Detected by another worker updating the database
+
+
 
 
 @dataclass
 class LaufbandDB:
     db_path: str | Path
-    worker: Optional[str] = None
+    worker: str|int = field(default_factory=os.getpid)  # default to the process ID
+    kill_timeout: int = 60  # seconds
+    retry_died: int = 0 # number of retries for jobs that are marked as died
 
     def __len__(self):
         with self.connect() as conn:
@@ -22,7 +30,65 @@ class LaufbandDB:
         return count
 
     def __iter__(self) -> Iterator[int]:
+        # check if self.worker is in the database
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT worker FROM worker_table
+                WHERE worker = ?
+                """,
+                (self.worker,),
+            )
+            if cursor.fetchone() is not None:
+                raise ValueError(f"Worker with identifier '{self.worker}' already exists.")
+            else:
+                self.update_worker(cursor)
+                self.mark_died(cursor)
+                conn.commit()
         return self
+    
+    def update_worker(self, cursor: sqlite3.Cursor):
+        if self.worker is None:
+            raise ValueError("Worker name must be set before iterating.")
+        # update if exists
+        cursor.execute(
+            """
+            UPDATE worker_table
+            SET last_seen = CURRENT_TIMESTAMP
+            WHERE worker = ?
+            """,
+            (self.worker,),
+        )
+        # insert if not exists
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO worker_table (worker)
+            VALUES (?)
+            """,
+            (self.worker,),
+        )
+    
+    def mark_died(self, cursor: sqlite3.Cursor):
+        # all jobs that are running and assigned to workers that are not seen in the last `kill_timeout` seconds mark as died
+        cursor.execute(
+            """
+            UPDATE progress_table
+            SET state = 'died'
+            WHERE state = 'running' AND worker IN (
+                SELECT worker FROM worker_table
+                WHERE last_seen < datetime('now', ?)
+            )
+            """,
+            (f'-{self.kill_timeout} seconds',),
+        )
+
+    def keep_alive(self):
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            self.update_worker(cursor)
+            self.mark_died(cursor)
+            conn.commit()
 
     def __next__(self) -> int:
         with self.connect() as conn:
@@ -30,20 +96,32 @@ class LaufbandDB:
             cursor.execute(
                 """
                 UPDATE progress_table
-                SET state = 'running', worker = ?
+                SET state = 'running', worker = ?, count = count + 1
                 WHERE id = (
                     SELECT id
                     FROM progress_table
-                    WHERE state = 'pending'
+                    WHERE 
+                        (
+                            state = 'pending'
+                        )
+                        OR
+                        (
+                            state = 'died' AND count < ?
+                        )
                     ORDER BY id
                     LIMIT 1
                 )
                 RETURNING id
                 """,
-                (self.worker,),
+                (self.worker, self.retry_died),
             )
             row = cursor.fetchone()
+
+            self.update_worker(cursor)
+            self.mark_died(cursor)
+
             conn.commit()
+
             if row:
                 return row[0] - 1  # Adjust for 0-based index
             else:
@@ -64,7 +142,8 @@ class LaufbandDB:
                 CREATE TABLE progress_table (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     state TEXT DEFAULT 'pending',
-                    worker TEXT
+                    worker TEXT,
+                    count INTEGER DEFAULT 0
                 )
             """)
             for _ in range(size):
@@ -75,6 +154,12 @@ class LaufbandDB:
                     """,
                     ("pending", None),
                 )
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS worker_table (
+                    worker TEXT PRIMARY KEY,
+                    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.commit()
 
     def finalize(self, idx: int, state: T_STATE = "completed"):

@@ -223,7 +223,7 @@ def test_identifier(tmp_path):
     for idx in pbar:
         if idx == 75:
             pbar.close()
-    for idx in Laufband(data, lock, com, identifier=None):
+    for idx in Laufband(data, lock, com):
         pass
 
     for idx in range(51):
@@ -231,7 +231,7 @@ def test_identifier(tmp_path):
     for idx in range(51, 76):
         assert db.get_worker(idx) == "worker_2"
     for idx in range(76, 100):
-        assert db.get_worker(idx) is None
+        assert db.get_worker(idx) == str(os.getpid())
 
 
 def test_iter_access_lock(tmp_path):

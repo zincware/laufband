@@ -75,3 +75,14 @@ def test_get_worker(tracker: LaufbandDB):
 
     for idx in range(10):
         assert tracker.get_worker(idx) == "worker_2" if idx > 5 else "worker_1"
+
+
+def test_dublicate_worker_identifier(tmp_path: Path):
+    a = LaufbandDB(tmp_path / "test.db", worker="worker")
+    b = LaufbandDB(tmp_path / "test.db", worker="worker")
+
+    a.create(5)
+
+    list(a)
+    with pytest.raises(ValueError, match="Worker with identifier 'worker' already exists."):
+        list(b)
