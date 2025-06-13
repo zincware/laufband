@@ -129,3 +129,8 @@ def test_heartbeat_timeout(tmp_path: Path):
     assert list(db_3) == [0, 1]  # update the worker state from 'died' to 'running'
     assert db_3.list_state("running") == [0, 1]
     assert db_3.list_state("died") == []
+
+
+def test_db_identifier_none(tmp_path: Path):
+    with pytest.raises(ValueError):
+        LaufbandDB(tmp_path / "test.db", worker=None)

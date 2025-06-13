@@ -94,10 +94,6 @@ class Laufband(t.Generic[_T]):
                 heartbeat_timeout=heartbeat_timeout,
                 max_died_retries=max_died_retries,
             )
-        elif identifier is None:
-            raise ValueError(
-                "Identifier must be a string or callable that returns a string."
-            )
         else:
             self.db = LaufbandDB(
                 self.com,

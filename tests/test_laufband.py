@@ -286,3 +286,8 @@ def test_failure_policy_stop(tmp_path):
     with pytest.raises(RuntimeError):
         for idx in pbar:
             pass
+
+
+def test_laufband_identifier_none():
+    with pytest.raises(ValueError):
+        Laufband([1, 2, 3], identifier=None)

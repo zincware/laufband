@@ -37,6 +37,10 @@ class LaufbandDB:
     max_died_retries: int = 0
     _worker_checked: bool = field(default=False, init=False)
 
+    def __post_init__(self):
+        if self.worker is None:
+            raise ValueError("Worker name must be set before iterating.")
+
     def __len__(self):
         with self.connect() as conn:
             cursor = conn.cursor()
@@ -71,8 +75,6 @@ class LaufbandDB:
         return self
 
     def update_worker(self, cursor: sqlite3.Cursor):
-        if self.worker is None:
-            raise ValueError("Worker name must be set before iterating.")
         # update if exists
         cursor.execute(
             """
