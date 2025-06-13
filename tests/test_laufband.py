@@ -189,6 +189,7 @@ def test_failed_via_break(tmp_path):
     assert pbar.completed == list(range(50))
     assert pbar.failed == [50]
     assert pbar.pending == list(range(51, 100))
+    assert pbar.died == []
 
 
 def test_inconsistent_db(tmp_path):
