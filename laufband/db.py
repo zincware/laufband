@@ -21,7 +21,7 @@ class LaufbandDB:
     ----------
     db_path : str | Path
         Path to the SQLite database file.
-    worker : str | int
+    worker : str
         Unique identifier for the worker, defaults to the process ID.
     heartbeat_timeout : int
         Timeout in seconds to mark jobs as 'died' if the worker has not been seen.
@@ -32,7 +32,7 @@ class LaufbandDB:
     """
 
     db_path: str | Path
-    worker: str | int = field(default_factory=os.getpid)
+    worker: str = field(default_factory=lambda: str(os.getpid()))
     heartbeat_timeout: int = 60
     max_died_retries: int = 0
     _worker_checked: bool = field(default=False, init=False)

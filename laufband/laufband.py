@@ -15,9 +15,11 @@ class Laufband(t.Generic[_T]):
     def __init__(
         self,
         data: Sequence[_T],
+        *,
         lock: Lock | None = None,
+        lock_path: Path | str | None = None,
         com: Path | str | None = None,
-        identifier: str | t.Callable = os.getpid,
+        identifier: str | t.Callable | None = None,
         cleanup: bool = False,
         failure_policy: t.Literal["continue", "stop"] = "continue",
         heartbeat_timeout: int | None = None,
@@ -33,13 +35,16 @@ class Laufband(t.Generic[_T]):
             if supported.
         lock : Lock | None
             A lock object to ensure thread safety. If None, a new lock will be created.
+        lock_path : Path | str
+            The path to the lock file used for synchronization. Defaults to "laufband.lock".
         com : Path | str | None
             The path to the db file used to store the state. If given, the file will not be removed.
             If not provided, a file named "laufband.sqlite" will be used and removed after completion.
         identifier : str | callable, optional
             A unique identifier for the worker. If not set, the process ID will be used.
             If a callable is provided, it will be called to generate the identifier.
-            Must be unique across all workers.
+            Must be unique across all workers. Can be set via the environment variable
+            ``LAUFBAND_IDENTIFIER``.
         cleanup : bool
             If True, the database file will be removed after processing is complete.
         failure_policy : str
@@ -88,9 +93,17 @@ class Laufband(t.Generic[_T]):
             heartbeat_timeout = int(os.getenv("LAUFBAND_HEARTBEAT_TIMEOUT", 60 * 60))
         if max_died_retries is None:
             max_died_retries = int(os.getenv("LAUFBAND_MAX_DIED_RETRIES", 0))
+        if identifier is None:
+            identifier = os.getenv("LAUFBAND_IDENTIFIER", str(os.getpid()))
+        if lock_path is not None and lock is not None:
+            raise ValueError(
+                "You cannot set both `lock` and `lock_path`. Use one or the other."
+            )
+        if lock_path is None:
+            lock_path = "laufband.lock"
 
         self.data = data
-        self.lock = lock if lock is not None else Lock("laufband.lock")
+        self.lock = lock if lock is not None else Lock(Path(lock_path).as_posix())
         self.com = Path(com or "laufband.sqlite")
 
         if callable(identifier):
@@ -147,6 +160,11 @@ class Laufband(t.Generic[_T]):
         """Return the indices of items that are pending processing."""
         with self.lock:
             return self.db.list_state("pending")
+
+    @property
+    def identifier(self) -> str:
+        """Return the identifier of the worker."""
+        return self.db.worker
 
     def __len__(self) -> int:
         """Return the length of the data."""
