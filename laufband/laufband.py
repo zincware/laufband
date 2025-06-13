@@ -17,7 +17,7 @@ class Laufband(t.Generic[_T]):
         data: Sequence[_T],
         lock: Lock | None = None,
         com: Path | str | None = None,
-        identifier: str | t.Callable = os.getpid,
+        identifier: str | t.Callable | None = None,
         cleanup: bool = False,
         failure_policy: t.Literal["continue", "stop"] = "continue",
         heartbeat_timeout: int | None = None,
@@ -39,7 +39,8 @@ class Laufband(t.Generic[_T]):
         identifier : str | callable, optional
             A unique identifier for the worker. If not set, the process ID will be used.
             If a callable is provided, it will be called to generate the identifier.
-            Must be unique across all workers.
+            Must be unique across all workers. Can be set via the environment variable
+            ``LAUFBAND_IDENTIFIER``.
         cleanup : bool
             If True, the database file will be removed after processing is complete.
         failure_policy : str
@@ -88,6 +89,8 @@ class Laufband(t.Generic[_T]):
             heartbeat_timeout = int(os.getenv("LAUFBAND_HEARTBEAT_TIMEOUT", 60 * 60))
         if max_died_retries is None:
             max_died_retries = int(os.getenv("LAUFBAND_MAX_DIED_RETRIES", 0))
+        if identifier is None:
+            identifier = os.getenv("LAUFBAND_IDENTIFIER", str(os.getpid()))
 
         self.data = data
         self.lock = lock if lock is not None else Lock("laufband.lock")
