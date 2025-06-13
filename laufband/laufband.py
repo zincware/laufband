@@ -3,12 +3,10 @@ import typing as t
 from collections.abc import Generator, Sequence
 from pathlib import Path
 
+from flufl.lock import Lock
 from tqdm import tqdm
 
 from laufband.db import LaufbandDB
-
-from flufl.lock import Lock
-
 
 _T = t.TypeVar("_T", covariant=True)
 
@@ -86,11 +84,23 @@ class Laufband(t.Generic[_T]):
         self.com = Path(com or "laufband.sqlite")
 
         if callable(identifier):
-            self.db = LaufbandDB(self.com, worker=identifier(), kill_timeout=kill_timeout, retry_died=retry_died)
+            self.db = LaufbandDB(
+                self.com,
+                worker=identifier(),
+                kill_timeout=kill_timeout,
+                retry_died=retry_died,
+            )
         elif identifier is None:
-            raise ValueError("Identifier must be a string or callable that returns a string.")
+            raise ValueError(
+                "Identifier must be a string or callable that returns a string."
+            )
         else:
-            self.db = LaufbandDB(self.com, worker=identifier, kill_timeout=kill_timeout, retry_died=retry_died)
+            self.db = LaufbandDB(
+                self.com,
+                worker=identifier,
+                kill_timeout=kill_timeout,
+                retry_died=retry_died,
+            )
 
         self.cleanup = cleanup
         self.kwargs = kwargs
@@ -155,7 +165,9 @@ class Laufband(t.Generic[_T]):
                 completed = self.db.list_state("completed")
 
                 if self.failure_policy == "stop" and self.db.list_state("failed"):
-                    raise RuntimeError("Another worker has failed. Stopping due to failure_policy='stop'.")
+                    raise RuntimeError(
+                        "Another worker has failed. Stopping due to failure_policy='stop'."
+                    )
 
                 try:
                     idx = next(self.db)

@@ -84,5 +84,7 @@ def test_dublicate_worker_identifier(tmp_path: Path):
     a.create(5)
 
     list(a)
-    with pytest.raises(ValueError, match="Worker with identifier 'worker' already exists."):
+    with pytest.raises(
+        ValueError, match="Worker with identifier 'worker' already exists."
+    ):
         list(b)

@@ -272,6 +272,7 @@ def test_iter_len(tmp_path):
     pbar = Laufband(list(range(50)))
     assert len(pbar) == 50
 
+
 def test_failure_policy_stop(tmp_path):
     """Test if failure policy stop works."""
     os.chdir(tmp_path)
@@ -279,7 +280,7 @@ def test_failure_policy_stop(tmp_path):
     for idx in pbar:
         if idx == 10:
             break
-    
+
     # reiterating will raise an error, as there is one job
     # in the database that has failed
     with pytest.raises(RuntimeError):

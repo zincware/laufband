@@ -1,26 +1,24 @@
 import contextlib
+import os
 import sqlite3
 import typing as t
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
-import os
 
 T_STATE = t.Literal["running", "pending", "failed", "completed", "died"]
 # failed: the job failed with some exit code
-# died: the python process was killed and the worker could not update the 
+# died: the python process was killed and the worker could not update the
 #       state of the job. Detected by another worker updating the database
-
-
 
 
 @dataclass
 class LaufbandDB:
     db_path: str | Path
-    worker: str|int = field(default_factory=os.getpid)  # default to the process ID
+    worker: str | int = field(default_factory=os.getpid)  # default to the process ID
     kill_timeout: int = 60  # seconds
-    retry_died: int = 0 # number of retries for jobs that are marked as died
+    retry_died: int = 0  # number of retries for jobs that are marked as died
 
     def __len__(self):
         with self.connect() as conn:
@@ -41,13 +39,15 @@ class LaufbandDB:
                 (self.worker,),
             )
             if cursor.fetchone() is not None:
-                raise ValueError(f"Worker with identifier '{self.worker}' already exists.")
+                raise ValueError(
+                    f"Worker with identifier '{self.worker}' already exists."
+                )
             else:
                 self.update_worker(cursor)
                 self.mark_died(cursor)
                 conn.commit()
         return self
-    
+
     def update_worker(self, cursor: sqlite3.Cursor):
         if self.worker is None:
             raise ValueError("Worker name must be set before iterating.")
@@ -68,7 +68,7 @@ class LaufbandDB:
             """,
             (self.worker,),
         )
-    
+
     def mark_died(self, cursor: sqlite3.Cursor):
         # all jobs that are running and assigned to workers that are not seen in the last `kill_timeout` seconds mark as died
         cursor.execute(
@@ -80,7 +80,7 @@ class LaufbandDB:
                 WHERE last_seen < datetime('now', ?)
             )
             """,
-            (f'-{self.kill_timeout} seconds',),
+            (f"-{self.kill_timeout} seconds",),
         )
 
     def keep_alive(self):
