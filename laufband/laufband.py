@@ -17,9 +17,11 @@ class Laufband(t.Generic[_T]):
         data: Sequence[_T],
         lock: Lock | None = None,
         com: Path | str | None = None,
-        identifier: str | t.Callable | None = os.getpid,
+        identifier: str | t.Callable = os.getpid,
         cleanup: bool = False,
         failure_policy: t.Literal["continue", "stop"] = "continue",
+        heartbeat_timeout: int | None = None,
+        max_died_retries: int = 0,
         **kwargs,
     ):
         """Laufband generator for parallel processing using file-based locking.
@@ -37,6 +39,7 @@ class Laufband(t.Generic[_T]):
         identifier : str | callable, optional
             A unique identifier for the worker. If not set, the process ID will be used.
             If a callable is provided, it will be called to generate the identifier.
+            Must be unique across all workers.
         cleanup : bool
             If True, the database file will be removed after processing is complete.
         failure_policy : str
@@ -44,6 +47,15 @@ class Laufband(t.Generic[_T]):
             With the "continue" policy, other processes will continue,
             while with the "raise" policy, the other process will stop
             and raise an exception that one process failed.
+        heartbeat_timeout : int
+            The timeout in seconds to consider a worker as dead if it has not been seen
+            in the last `heartbeat_timeout` seconds. This is used to mark jobs as "died" if the
+            worker process is killed unexpectedly. Set to a value greater than what you expect
+            the runtime of the longest iteration to be.
+            Defaults to 1 hour or the value of the environment variable
+            ``LAUFBAND_HEARTBEAT_TIMEOUT`` if set.
+        max_died_retries : int
+            The number of times to retry processing items that have been marked as "died".
         kwargs : dict
             Additional arguments to pass to tqdm.
 
@@ -69,13 +81,27 @@ class Laufband(t.Generic[_T]):
         ...        output_file.write_text(json.dumps(file_content))
 
         """
+        if heartbeat_timeout is None:
+            heartbeat_timeout = int(os.getenv("LAUFBAND_HEARTBEAT_TIMEOUT", 60 * 60))
         self.data = data
         self.lock = lock if lock is not None else Lock("laufband.lock")
         self.com = Path(com or "laufband.sqlite")
+
         if callable(identifier):
-            self.db = LaufbandDB(self.com, worker=identifier())
+            self.db = LaufbandDB(
+                self.com,
+                worker=identifier(),
+                heartbeat_timeout=heartbeat_timeout,
+                max_died_retries=max_died_retries,
+            )
         else:
-            self.db = LaufbandDB(self.com, worker=identifier)
+            self.db = LaufbandDB(
+                self.com,
+                worker=identifier,
+                heartbeat_timeout=heartbeat_timeout,
+                max_died_retries=max_died_retries,
+            )
+
         self.cleanup = cleanup
         self.kwargs = kwargs
 
@@ -132,14 +158,16 @@ class Laufband(t.Generic[_T]):
                     raise ValueError(
                         "The size of the data does not match the size of the database."
                     )
-
+        # adapt tqdm to properly work with died jobs
         tbar = tqdm(total=size, **self.kwargs)
         while True:
             with self.lock:
                 completed = self.db.list_state("completed")
 
                 if self.failure_policy == "stop" and self.db.list_state("failed"):
-                    raise RuntimeError("Another worker has failed. Stopping due to failure_policy='stop'.")
+                    raise RuntimeError(
+                        "Another worker has failed. Stopping due to failure_policy='stop'."
+                    )
 
                 try:
                     idx = next(self.db)

@@ -223,7 +223,7 @@ def test_identifier(tmp_path):
     for idx in pbar:
         if idx == 75:
             pbar.close()
-    for idx in Laufband(data, lock, com, identifier=None):
+    for idx in Laufband(data, lock, com):
         pass
 
     for idx in range(51):
@@ -231,7 +231,7 @@ def test_identifier(tmp_path):
     for idx in range(51, 76):
         assert db.get_worker(idx) == "worker_2"
     for idx in range(76, 100):
-        assert db.get_worker(idx) is None
+        assert db.get_worker(idx) == str(os.getpid())
 
 
 def test_iter_access_lock(tmp_path):
@@ -272,6 +272,7 @@ def test_iter_len(tmp_path):
     pbar = Laufband(list(range(50)))
     assert len(pbar) == 50
 
+
 def test_failure_policy_stop(tmp_path):
     """Test if failure policy stop works."""
     os.chdir(tmp_path)
@@ -279,9 +280,14 @@ def test_failure_policy_stop(tmp_path):
     for idx in pbar:
         if idx == 10:
             break
-    
+
     # reiterating will raise an error, as there is one job
     # in the database that has failed
     with pytest.raises(RuntimeError):
         for idx in pbar:
             pass
+
+
+def test_laufband_identifier_none():
+    with pytest.raises(ValueError):
+        Laufband([1, 2, 3], identifier=None)
