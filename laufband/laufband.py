@@ -21,7 +21,7 @@ class Laufband(t.Generic[_T]):
         cleanup: bool = False,
         failure_policy: t.Literal["continue", "stop"] = "continue",
         heartbeat_timeout: int | None = None,
-        max_died_retries: int = 0,
+        max_died_retries: int | None = None,
         **kwargs,
     ):
         """Laufband generator for parallel processing using file-based locking.
@@ -56,6 +56,9 @@ class Laufband(t.Generic[_T]):
             ``LAUFBAND_HEARTBEAT_TIMEOUT`` if set.
         max_died_retries : int
             The number of times to retry processing items that have been marked as "died".
+            If set to 0, no retries will be attempted.
+            Defaults to 0 or the value of the environment variable
+            ``LAUFBAND_MAX_DIED_RETRIES`` if set.
         kwargs : dict
             Additional arguments to pass to tqdm.
 
@@ -83,6 +86,9 @@ class Laufband(t.Generic[_T]):
         """
         if heartbeat_timeout is None:
             heartbeat_timeout = int(os.getenv("LAUFBAND_HEARTBEAT_TIMEOUT", 60 * 60))
+        if max_died_retries is None:
+            max_died_retries = int(os.getenv("LAUFBAND_MAX_DIED_RETRIES", 0))
+
         self.data = data
         self.lock = lock if lock is not None else Lock("laufband.lock")
         self.com = Path(com or "laufband.sqlite")
