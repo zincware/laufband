@@ -15,10 +15,26 @@ T_STATE = t.Literal["running", "pending", "failed", "completed", "died"]
 
 @dataclass
 class LaufbandDB:
+    """Laufband database interface for managing job progress and worker states.
+
+    Attributes
+    ----------
+    db_path : str | Path
+        Path to the SQLite database file.
+    worker : str | int
+        Unique identifier for the worker, defaults to the process ID.
+    heartbeat_timeout : int
+        Timeout in seconds to mark jobs as 'died' if the worker has not been seen.
+    max_died_retries : int
+        Number of retries for jobs that are marked as 'died'.
+    _worker_checked : bool
+        Internal flag to check if the worker has been registered.
+    """
+
     db_path: str | Path
-    worker: str | int = field(default_factory=os.getpid)  # default to the process ID
-    heartbeat_timeout: int = 60  # seconds
-    max_died_retries: int = 0  # number of retries for jobs that are marked as died
+    worker: str | int = field(default_factory=os.getpid)
+    heartbeat_timeout: int = 60
+    max_died_retries: int = 0
     _worker_checked: bool = field(default=False, init=False)
 
     def __len__(self):
@@ -29,7 +45,10 @@ class LaufbandDB:
         return count
 
     def __iter__(self) -> Iterator[int]:
-        # check if self.worker is in the database
+        """Iterate over the progress table, yielding job IDs.
+
+        This will check if the worker is already registered and update the worker state.
+        """
         if not self._worker_checked:
             with self.connect() as conn:
                 cursor = conn.cursor()
@@ -73,7 +92,7 @@ class LaufbandDB:
         )
 
     def mark_died(self, cursor: sqlite3.Cursor):
-        # all jobs that are running and assigned to workers that are not seen in the last `heartbeat_timeout` seconds mark as died
+        """Mark jobs as died if the worker has not been seen in the last `heartbeat_timeout` seconds."""
         cursor.execute(
             """
             UPDATE progress_table
@@ -85,13 +104,6 @@ class LaufbandDB:
             """,
             (f"-{self.heartbeat_timeout} seconds",),
         )
-
-    def keep_alive(self):
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            self.update_worker(cursor)
-            self.mark_died(cursor)
-            conn.commit()
 
     def __next__(self) -> int:
         with self.connect() as conn:

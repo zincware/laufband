@@ -114,18 +114,18 @@ def test_heartbeat_timeout(tmp_path: Path):
     db_1 = LaufbandDB(com, heartbeat_timeout=0.1, worker="1")
     db_1.create(2)
 
-    assert list(db_1) == [0, 1]  # assign the worker to all jobs
+    assert list(db_1) == [0, 1]
     assert db_1.list_state("running") == [0, 1]
 
-    time.sleep(2)  # Simulate a timeout by waiting longer than the heartbeat_timeout
+    time.sleep(2)
 
     db_2 = LaufbandDB(com, worker="2", heartbeat_timeout=1)
     assert list(db_2) == []  # update the worker state
-    assert db_2.list_state("running") == []  # no jobs are running for worker "2"
-    assert db_2.list_state("died") == [0, 1]  # jobs are still pending
+    assert db_2.list_state("running") == []
+    assert db_2.list_state("died") == [0, 1]
 
     db_3 = LaufbandDB(com, worker="3", heartbeat_timeout=1, max_died_retries=1)
 
     assert list(db_3) == [0, 1]  # update the worker state from 'died' to 'running'
-    assert db_3.list_state("running") == [0, 1]  # jobs are running for worker "3"
-    assert db_3.list_state("died") == []  # no jobs are marked as died
+    assert db_3.list_state("running") == [0, 1]
+    assert db_3.list_state("died") == []
