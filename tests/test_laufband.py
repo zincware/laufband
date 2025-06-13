@@ -118,6 +118,7 @@ def test_resume_progress(tmp_path):
     output.write_text(json.dumps({"data": []}))
 
     pbar = Laufband(data, lock=lock, com=db_path)
+    assert pbar.disabled is False
 
     for idx, point in enumerate(pbar):
         with lock:
@@ -300,3 +301,43 @@ def test_lock_and_path():
 
     pbar = Laufband(list(range(10)), lock=Lock("custom.lock"))
     assert pbar.lock.lockfile == "custom.lock"
+
+
+def test_disable(tmp_path):
+    """Test if Laufband can be disabled."""
+    os.chdir(tmp_path)
+    data = list(range(100))
+
+    pbar = Laufband(data, disable=True)
+    assert pbar.disabled is True
+
+    assert list(pbar) == data
+    # running it again won't change the result, contrary to the default behavior of Laufband
+    assert list(pbar) == data
+
+    assert pbar.com.exists()
+
+    with pytest.raises(RuntimeError):
+        pbar.pending
+    with pytest.raises(RuntimeError):
+        pbar.completed
+    with pytest.raises(RuntimeError):
+        pbar.failed
+    with pytest.raises(RuntimeError):
+        pbar.running
+    with pytest.raises(RuntimeError):
+        pbar.died
+
+
+@pytest.fixture
+def disable_laufband():
+    """Fixture to disable Laufband for testing."""
+    os.environ["LAUFBAND_DISABLE"] = "1"
+    yield
+    del os.environ["LAUFBAND_DISABLE"]
+
+
+def test_disable_via_env(disable_laufband):
+    """Test if Laufband can be disabled via environment variable."""
+    pbar = Laufband(list(range(100)))
+    assert pbar.disabled is True
