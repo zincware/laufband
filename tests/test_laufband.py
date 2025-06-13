@@ -286,3 +286,17 @@ def test_failure_policy_stop(tmp_path):
     with pytest.raises(RuntimeError):
         for idx in pbar:
             pass
+
+
+def test_lock_and_path():
+    with pytest.raises(ValueError):
+        Laufband(list(range(10)), lock=Lock("file"), lock_path="invalid_path")
+
+    pbar = Laufband(list(range(10)), lock_path=Path("valid_path"))
+    assert pbar.lock.lockfile == "valid_path"
+
+    pbar = Laufband(list(range(10)))
+    assert pbar.lock.lockfile == "laufband.lock"
+
+    pbar = Laufband(list(range(10)), lock=Lock("custom.lock"))
+    assert pbar.lock.lockfile == "custom.lock"

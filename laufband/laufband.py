@@ -16,6 +16,7 @@ class Laufband(t.Generic[_T]):
         self,
         data: Sequence[_T],
         lock: Lock | None = None,
+        lock_path: Path | str | None = None,
         com: Path | str | None = None,
         identifier: str | t.Callable | None = None,
         cleanup: bool = False,
@@ -33,6 +34,8 @@ class Laufband(t.Generic[_T]):
             if supported.
         lock : Lock | None
             A lock object to ensure thread safety. If None, a new lock will be created.
+        lock_path : Path | str
+            The path to the lock file used for synchronization. Defaults to "laufband.lock".
         com : Path | str | None
             The path to the db file used to store the state. If given, the file will not be removed.
             If not provided, a file named "laufband.sqlite" will be used and removed after completion.
@@ -91,9 +94,15 @@ class Laufband(t.Generic[_T]):
             max_died_retries = int(os.getenv("LAUFBAND_MAX_DIED_RETRIES", 0))
         if identifier is None:
             identifier = os.getenv("LAUFBAND_IDENTIFIER", str(os.getpid()))
+        if lock_path is not None and lock is not None:
+            raise ValueError(
+                "You cannot set both `lock` and `lock_path`. Use one or the other."
+            )
+        if lock_path is None:
+            lock_path = "laufband.lock"
 
         self.data = data
-        self.lock = lock if lock is not None else Lock("laufband.lock")
+        self.lock = lock if lock is not None else Lock(Path(lock_path).as_posix())
         self.com = Path(com or "laufband.sqlite")
 
         if callable(identifier):
@@ -150,6 +159,11 @@ class Laufband(t.Generic[_T]):
         """Return the indices of items that are pending processing."""
         with self.lock:
             return self.db.list_state("pending")
+
+    @property
+    def identifier(self) -> str:
+        """Return the identifier of the worker."""
+        return self.db.worker
 
     def __len__(self) -> int:
         """Return the length of the data."""
