@@ -11,6 +11,17 @@ from laufband.db import LaufbandDB
 _T = t.TypeVar("_T", covariant=True)
 
 
+def _check_disabled(func: t.Callable) -> t.Callable:
+    """Decorator to raise an error if Laufband is disabled."""
+
+    def wrapper(self, *args, **kwargs):
+        if self.disabled:
+            raise RuntimeError("Laufband is disabled. Cannot call this method.")
+        return func(self, *args, **kwargs)
+
+    return wrapper
+
+
 class Laufband(t.Generic[_T]):
     def __init__(
         self,
@@ -24,7 +35,8 @@ class Laufband(t.Generic[_T]):
         failure_policy: t.Literal["continue", "stop"] = "continue",
         heartbeat_timeout: int | None = None,
         max_died_retries: int | None = None,
-        **kwargs,
+        disable: bool | None = None,
+        tqdm_kwargs: dict[str, t.Any] | None = None,
     ):
         """Laufband generator for parallel processing using file-based locking.
 
@@ -64,7 +76,11 @@ class Laufband(t.Generic[_T]):
             If set to 0, no retries will be attempted.
             Defaults to 0 or the value of the environment variable
             ``LAUFBAND_MAX_DIED_RETRIES`` if set.
-        kwargs : dict
+        disable : bool
+            If True, disable Laufband features and return a tqdm iterator.
+            Can also be set via the environment variable
+            ``LAUFBAND_DISABLE``.
+        tqdm_kwargs : dict
             Additional arguments to pass to tqdm.
 
         Example
@@ -99,6 +115,11 @@ class Laufband(t.Generic[_T]):
             raise ValueError(
                 "You cannot set both `lock` and `lock_path`. Use one or the other."
             )
+        if disable is None:
+            self.disabled = os.getenv("LAUFBAND_DISABLE", "0") == "1"
+        else:
+            self.disabled = disable
+
         if lock_path is None:
             lock_path = "laufband.lock"
 
@@ -122,7 +143,7 @@ class Laufband(t.Generic[_T]):
             )
 
         self.cleanup = cleanup
-        self.kwargs = kwargs
+        self.tqdm_kwargs = tqdm_kwargs or {}
 
         self._close_trigger = False
         self.failure_policy = failure_policy
@@ -138,28 +159,39 @@ class Laufband(t.Generic[_T]):
         self._close_trigger = True
 
     @property
+    @_check_disabled
     def completed(self) -> list[int]:
         """Return the indices of items that have been completed."""
         with self.lock:
             return self.db.list_state("completed")
 
     @property
+    @_check_disabled
     def failed(self) -> list[int]:
         """Return the indices of items that have failed processing."""
         with self.lock:
             return self.db.list_state("failed")
 
     @property
+    @_check_disabled
     def running(self) -> list[int]:
         """Return the indices of items that are currently being processed."""
         with self.lock:
             return self.db.list_state("running")
 
     @property
+    @_check_disabled
     def pending(self) -> list[int]:
         """Return the indices of items that are pending processing."""
         with self.lock:
             return self.db.list_state("pending")
+
+    @property
+    @_check_disabled
+    def died(self) -> list[int]:
+        """Return the indices of items that have been marked as 'died'."""
+        with self.lock:
+            return self.db.list_state("died")
 
     @property
     def identifier(self) -> str:
@@ -173,6 +205,16 @@ class Laufband(t.Generic[_T]):
 
     def __iter__(self) -> Generator[_T, None, None]:
         """The generator that handles the iteration logic."""
+        if self.disabled:
+            # we create the database anyhow, e.g. no issues with DVC outs
+            size = len(self.data)
+            if not self.com.exists():
+                self.db.create(size)
+
+            # If Laufband is disabled, yield from a simple tqdm iterator
+            yield from tqdm(self.data, **self.tqdm_kwargs)
+            return
+
         with self.lock:
             size = len(self.data)
             if not self.com.exists():
@@ -183,7 +225,7 @@ class Laufband(t.Generic[_T]):
                         "The size of the data does not match the size of the database."
                     )
         # adapt tqdm to properly work with died jobs
-        tbar = tqdm(total=size, **self.kwargs)
+        tbar = tqdm(total=size, **self.tqdm_kwargs)
         while True:
             with self.lock:
                 completed = self.db.list_state("completed")
