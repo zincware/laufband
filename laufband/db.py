@@ -18,7 +18,7 @@ class LaufbandDB:
     db_path: str | Path
     worker: str | int = field(default_factory=os.getpid)  # default to the process ID
     heartbeat_timeout: int = 60  # seconds
-    retry_died: int = 0  # number of retries for jobs that are marked as died
+    max_died_retries: int = 0  # number of retries for jobs that are marked as died
     _worker_checked: bool = field(default=False, init=False)
 
     def __len__(self):
@@ -116,7 +116,7 @@ class LaufbandDB:
                 )
                 RETURNING id
                 """,
-                (self.worker, self.retry_died),
+                (self.worker, self.max_died_retries),
             )
             row = cursor.fetchone()
 

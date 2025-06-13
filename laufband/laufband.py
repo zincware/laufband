@@ -21,7 +21,7 @@ class Laufband(t.Generic[_T]):
         cleanup: bool = False,
         failure_policy: t.Literal["continue", "stop"] = "continue",
         heartbeat_timeout: int = 60,
-        retry_died: int = 0,
+        max_died_retries: int = 0,
         **kwargs,
     ):
         """Laufband generator for parallel processing using file-based locking.
@@ -52,7 +52,7 @@ class Laufband(t.Generic[_T]):
             in the last `heartbeat_timeout` seconds. This is used to mark jobs as "died" if the
             worker process is killed unexpectedly. Set to a value greater than what you expect
             the runtime of the longest iteration to be.
-        retry_died : int
+        max_died_retries : int
             The number of times to retry processing items that have been marked as "died".
         kwargs : dict
             Additional arguments to pass to tqdm.
@@ -88,7 +88,7 @@ class Laufband(t.Generic[_T]):
                 self.com,
                 worker=identifier(),
                 heartbeat_timeout=heartbeat_timeout,
-                retry_died=retry_died,
+                max_died_retries=max_died_retries,
             )
         elif identifier is None:
             raise ValueError(
@@ -99,7 +99,7 @@ class Laufband(t.Generic[_T]):
                 self.com,
                 worker=identifier,
                 heartbeat_timeout=heartbeat_timeout,
-                retry_died=retry_died,
+                max_died_retries=max_died_retries,
             )
 
         self.cleanup = cleanup

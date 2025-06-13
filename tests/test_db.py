@@ -92,16 +92,16 @@ def test_dublicate_worker_identifier(tmp_path: Path):
         list(b)
 
 
-@pytest.mark.parametrize("retry_died", [0, 1, 2])
-def test_retry_killed(tmp_path: Path, retry_died: int):
+@pytest.mark.parametrize("max_died_retries", [0, 1, 2])
+def test_retry_killed(tmp_path: Path, max_died_retries: int):
     """Test if laufband can handle killed jobs."""
     com = tmp_path / "laufband.sqlite"
-    db = LaufbandDB(com, retry_died=retry_died)
+    db = LaufbandDB(com, max_died_retries=max_died_retries)
     db.create(5)
 
     assert list(db) == list(range(5))
 
-    for _ in range(retry_died):
+    for _ in range(max_died_retries):
         db.finalize(0, "died")
         assert list(db) == [0]
 
@@ -124,7 +124,7 @@ def test_heartbeat_timeout(tmp_path: Path):
     assert db_2.list_state("running") == []  # no jobs are running for worker "2"
     assert db_2.list_state("died") == [0, 1]  # jobs are still pending
 
-    db_3 = LaufbandDB(com, worker="3", heartbeat_timeout=1, retry_died=1)
+    db_3 = LaufbandDB(com, worker="3", heartbeat_timeout=1, max_died_retries=1)
 
     assert list(db_3) == [0, 1]  # update the worker state from 'died' to 'running'
     assert db_3.list_state("running") == [0, 1]  # jobs are running for worker "3"
