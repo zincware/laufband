@@ -19,6 +19,7 @@ class LaufbandDB:
     worker: str | int = field(default_factory=os.getpid)  # default to the process ID
     kill_timeout: int = 60  # seconds
     retry_died: int = 0  # number of retries for jobs that are marked as died
+    _worker_checked: bool = field(default=False, init=False)
 
     def __len__(self):
         with self.connect() as conn:
@@ -29,23 +30,25 @@ class LaufbandDB:
 
     def __iter__(self) -> Iterator[int]:
         # check if self.worker is in the database
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT worker FROM worker_table
-                WHERE worker = ?
-                """,
-                (self.worker,),
-            )
-            if cursor.fetchone() is not None:
-                raise ValueError(
-                    f"Worker with identifier '{self.worker}' already exists."
+        if not self._worker_checked:
+            with self.connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT worker FROM worker_table
+                    WHERE worker = ?
+                    """,
+                    (self.worker,),
                 )
-            else:
-                self.update_worker(cursor)
-                self.mark_died(cursor)
-                conn.commit()
+                if cursor.fetchone() is not None:
+                    raise ValueError(
+                        f"Worker with identifier '{self.worker}' already exists."
+                    )
+                else:
+                    self.update_worker(cursor)
+                    self.mark_died(cursor)
+                    conn.commit()
+            self._worker_checked = True
         return self
 
     def update_worker(self, cursor: sqlite3.Cursor):
@@ -106,7 +109,7 @@ class LaufbandDB:
                         )
                         OR
                         (
-                            state = 'died' AND count < ?
+                            state = 'died' AND count - 1 < ?
                         )
                     ORDER BY id
                     LIMIT 1

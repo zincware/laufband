@@ -1,4 +1,5 @@
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -83,8 +84,48 @@ def test_dublicate_worker_identifier(tmp_path: Path):
 
     a.create(5)
 
-    list(a)
+    assert list(a) == list(range(5))
+    assert list(a) == []  # test creating the "iter" object again
     with pytest.raises(
         ValueError, match="Worker with identifier 'worker' already exists."
     ):
         list(b)
+
+
+@pytest.mark.parametrize("retry_died", [0, 1, 2])
+def test_retry_killed(tmp_path: Path, retry_died: int):
+    """Test if laufband can handle killed jobs."""
+    com = tmp_path / "laufband.sqlite"
+    db = LaufbandDB(com, retry_died=retry_died)
+    db.create(5)
+
+    assert list(db) == list(range(5))
+
+    for _ in range(retry_died):
+        db.finalize(0, "died")
+        assert list(db) == [0]
+
+    assert list(db) == []
+
+
+def test_kill_timeout(tmp_path: Path):
+    """Test if laufband can handle killed jobs."""
+    com = tmp_path / "laufband.sqlite"
+    db_1 = LaufbandDB(com, kill_timeout=0.1, worker="1")
+    db_1.create(2)
+
+    assert list(db_1) == [0, 1]  # assign the worker to all jobs
+    assert db_1.list_state("running") == [0, 1]
+
+    time.sleep(2)  # Simulate a timeout by waiting longer than the kill_timeout
+
+    db_2 = LaufbandDB(com, worker="2", kill_timeout=1)
+    assert list(db_2) == []  # update the worker state
+    assert db_2.list_state("running") == []  # no jobs are running for worker "2"
+    assert db_2.list_state("died") == [0, 1]  # jobs are still pending
+
+    db_3 = LaufbandDB(com, worker="3", kill_timeout=1, retry_died=1)
+
+    assert list(db_3) == [0, 1]  # update the worker state from 'died' to 'running'
+    assert db_3.list_state("running") == [0, 1]  # jobs are running for worker "3"
+    assert db_3.list_state("died") == []  # no jobs are marked as died
