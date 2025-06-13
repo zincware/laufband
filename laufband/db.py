@@ -17,7 +17,7 @@ T_STATE = t.Literal["running", "pending", "failed", "completed", "died"]
 class LaufbandDB:
     db_path: str | Path
     worker: str | int = field(default_factory=os.getpid)  # default to the process ID
-    kill_timeout: int = 60  # seconds
+    heartbeat_timeout: int = 60  # seconds
     retry_died: int = 0  # number of retries for jobs that are marked as died
     _worker_checked: bool = field(default=False, init=False)
 
@@ -73,7 +73,7 @@ class LaufbandDB:
         )
 
     def mark_died(self, cursor: sqlite3.Cursor):
-        # all jobs that are running and assigned to workers that are not seen in the last `kill_timeout` seconds mark as died
+        # all jobs that are running and assigned to workers that are not seen in the last `heartbeat_timeout` seconds mark as died
         cursor.execute(
             """
             UPDATE progress_table
@@ -83,7 +83,7 @@ class LaufbandDB:
                 WHERE last_seen < datetime('now', ?)
             )
             """,
-            (f"-{self.kill_timeout} seconds",),
+            (f"-{self.heartbeat_timeout} seconds",),
         )
 
     def keep_alive(self):

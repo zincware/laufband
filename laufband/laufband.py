@@ -20,7 +20,7 @@ class Laufband(t.Generic[_T]):
         identifier: str | t.Callable = os.getpid,
         cleanup: bool = False,
         failure_policy: t.Literal["continue", "stop"] = "continue",
-        kill_timeout: int = 60,
+        heartbeat_timeout: int = 60,
         retry_died: int = 0,
         **kwargs,
     ):
@@ -47,9 +47,9 @@ class Laufband(t.Generic[_T]):
             With the "continue" policy, other processes will continue,
             while with the "raise" policy, the other process will stop
             and raise an exception that one process failed.
-        kill_timeout : int
+        heartbeat_timeout : int
             The timeout in seconds to consider a worker as dead if it has not been seen
-            in the last `kill_timeout` seconds. This is used to mark jobs as "died" if the
+            in the last `heartbeat_timeout` seconds. This is used to mark jobs as "died" if the
             worker process is killed unexpectedly. Set to a value greater than what you expect
             the runtime of the longest iteration to be.
         retry_died : int
@@ -87,7 +87,7 @@ class Laufband(t.Generic[_T]):
             self.db = LaufbandDB(
                 self.com,
                 worker=identifier(),
-                kill_timeout=kill_timeout,
+                heartbeat_timeout=heartbeat_timeout,
                 retry_died=retry_died,
             )
         elif identifier is None:
@@ -98,7 +98,7 @@ class Laufband(t.Generic[_T]):
             self.db = LaufbandDB(
                 self.com,
                 worker=identifier,
-                kill_timeout=kill_timeout,
+                heartbeat_timeout=heartbeat_timeout,
                 retry_died=retry_died,
             )
 
