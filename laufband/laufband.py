@@ -15,6 +15,7 @@ class Laufband(t.Generic[_T]):
     def __init__(
         self,
         data: Sequence[_T],
+        *,
         lock: Lock | None = None,
         lock_path: Path | str | None = None,
         com: Path | str | None = None,
