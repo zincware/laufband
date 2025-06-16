@@ -2,8 +2,8 @@ import json
 import multiprocessing
 import os
 import time
-from pathlib import Path
 from contextlib import nullcontext
+from pathlib import Path
 
 import pytest
 from flufl.lock import Lock
@@ -314,7 +314,8 @@ def test_disable(tmp_path):
     assert pbar.disabled is True
 
     assert list(pbar) == data
-    # running it again won't change the result, contrary to the default behavior of Laufband
+    # running it again won't change the result, contrary
+    #  to the default behavior of Laufband
     assert list(pbar) == data
 
     assert pbar.com.exists()

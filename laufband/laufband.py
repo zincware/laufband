@@ -1,8 +1,8 @@
 import os
 import typing as t
 from collections.abc import Generator, Sequence
-from pathlib import Path
 from contextlib import nullcontext
+from pathlib import Path
 
 from flufl.lock import Lock
 from tqdm import tqdm
@@ -49,10 +49,13 @@ class Laufband(t.Generic[_T]):
         lock : Lock | None
             A lock object to ensure thread safety. If None, a new lock will be created.
         lock_path : Path | str
-            The path to the lock file used for synchronization. Defaults to "laufband.lock".
+            The path to the lock file used for synchronization.
+            Defaults to "laufband.lock".
         com : Path | str | None
-            The path to the db file used to store the state. If given, the file will not be removed.
-            If not provided, a file named "laufband.sqlite" will be used and removed after completion.
+            The path to the db file used to store the state.
+            If given, the file will not be removed.
+            If not provided, a file named "laufband.sqlite" will be
+            used and removed after completion.
         identifier : str | callable, optional
             A unique identifier for the worker. If not set, the process ID will be used.
             If a callable is provided, it will be called to generate the identifier.
@@ -67,13 +70,13 @@ class Laufband(t.Generic[_T]):
             and raise an exception that one process failed.
         heartbeat_timeout : int
             The timeout in seconds to consider a worker as dead if it has not been seen
-            in the last `heartbeat_timeout` seconds. This is used to mark jobs as "died" if the
-            worker process is killed unexpectedly. Set to a value greater than what you expect
-            the runtime of the longest iteration to be.
+            in the last `heartbeat_timeout` seconds. This is used to mark jobs
+            as "died" if the worker process is killed unexpectedly. Set to a value
+            greater than what you expect the runtime of the longest iteration to be.
             Defaults to 1 hour or the value of the environment variable
             ``LAUFBAND_HEARTBEAT_TIMEOUT`` if set.
         max_died_retries : int
-            The number of times to retry processing items that have been marked as "died".
+            The number of times to retry processing items that have been marked as died.
             If set to 0, no retries will be attempted.
             Defaults to 0 or the value of the environment variable
             ``LAUFBAND_MAX_DIED_RETRIES`` if set.
@@ -100,7 +103,8 @@ class Laufband(t.Generic[_T]):
         ...    # Simulate some computationally intensive task
         ...    time.sleep(0.1)
         ...    with worker.lock:
-        ...        # Access and modify a shared resource (e.g., a file) safely using the lock
+        ...        # Access and modify a shared resource (e.g., a file)
+        ...        # safely using the lock
         ...        file_content = json.loads(output_file.read_text())
         ...        file_content["processed_data"].append(item)
         ...        output_file.write_text(json.dumps(file_content))
@@ -236,7 +240,8 @@ class Laufband(t.Generic[_T]):
 
                 if self.failure_policy == "stop" and self.db.list_state("failed"):
                     raise RuntimeError(
-                        "Another worker has failed. Stopping due to failure_policy='stop'."
+                        "Another worker has failed. "
+                        "Stopping due to failure_policy='stop'."
                     )
 
                 try:
