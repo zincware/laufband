@@ -94,7 +94,8 @@ class LaufbandDB:
         )
 
     def mark_died(self, cursor: sqlite3.Cursor):
-        """Mark jobs as died if the worker has not been seen in the last `heartbeat_timeout` seconds."""
+        """Mark jobs as died if the worker has not been seen in
+        the last `heartbeat_timeout` seconds."""
         cursor.execute(
             """
             UPDATE progress_table
@@ -117,7 +118,7 @@ class LaufbandDB:
                 WHERE id = (
                     SELECT id
                     FROM progress_table
-                    WHERE 
+                    WHERE
                         (
                             state = 'pending'
                         )

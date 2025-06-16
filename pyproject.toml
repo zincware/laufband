@@ -36,3 +36,21 @@ build-backend = "hatchling.build"
 Repository = "https://github.com/zincware/laufband"
 Releases = "https://github.com/zincware/zntrack/laufband"
 Discord = "https://discord.gg/7ncfwhsnm4"
+
+[tool.codespell]
+skip = "LICENSE"
+
+[tool.ruff.lint]
+select = ["E", "F", "N", "C", "I"] #, "ANN"]
+extend-ignore = [
+    "D213", "D203",
+    "D401",
+    "N802", "N801",
+    "C901", # for now
+]
+
+exclude = [
+    "tmp",
+    "tests",
+    "docs",
+]

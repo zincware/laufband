@@ -2,6 +2,7 @@ import json
 import multiprocessing
 import os
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -313,7 +314,8 @@ def test_disable(tmp_path):
     assert pbar.disabled is True
 
     assert list(pbar) == data
-    # running it again won't change the result, contrary to the default behavior of Laufband
+    # running it again won't change the result, contrary
+    #  to the default behavior of Laufband
     assert list(pbar) == data
 
     assert pbar.com.exists()
@@ -328,6 +330,10 @@ def test_disable(tmp_path):
         pbar.running
     with pytest.raises(RuntimeError):
         pbar.died
+
+    with pbar.lock:
+        pass
+    assert isinstance(pbar.lock, nullcontext)
 
 
 @pytest.fixture
