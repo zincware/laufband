@@ -329,7 +329,7 @@ def test_disable(tmp_path):
         pbar.running
     with pytest.raises(RuntimeError):
         pbar.died
-    
+
     with pbar.lock:
         pass
     assert isinstance(pbar.lock, nullcontext)

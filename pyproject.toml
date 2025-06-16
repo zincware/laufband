@@ -36,3 +36,6 @@ build-backend = "hatchling.build"
 Repository = "https://github.com/zincware/laufband"
 Releases = "https://github.com/zincware/zntrack/laufband"
 Discord = "https://discord.gg/7ncfwhsnm4"
+
+[tool.codespell]
+skip = "LICENSE"

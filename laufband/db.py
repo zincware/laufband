@@ -117,7 +117,7 @@ class LaufbandDB:
                 WHERE id = (
                     SELECT id
                     FROM progress_table
-                    WHERE 
+                    WHERE
                         (
                             state = 'pending'
                         )
