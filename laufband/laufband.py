@@ -2,6 +2,7 @@ import os
 import typing as t
 from collections.abc import Generator, Sequence
 from pathlib import Path
+from contextlib import nullcontext
 
 from flufl.lock import Lock
 from tqdm import tqdm
@@ -124,7 +125,10 @@ class Laufband(t.Generic[_T]):
             lock_path = "laufband.lock"
 
         self.data = data
-        self.lock = lock if lock is not None else Lock(Path(lock_path).as_posix())
+        if self.disabled:
+            self.lock = nullcontext()
+        else:
+            self.lock = lock if lock is not None else Lock(Path(lock_path).as_posix())
         self.com = Path(com or "laufband.sqlite")
 
         if callable(identifier):

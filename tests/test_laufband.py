@@ -3,6 +3,7 @@ import multiprocessing
 import os
 import time
 from pathlib import Path
+from contextlib import nullcontext
 
 import pytest
 from flufl.lock import Lock
@@ -328,6 +329,10 @@ def test_disable(tmp_path):
         pbar.running
     with pytest.raises(RuntimeError):
         pbar.died
+    
+    with pbar.lock:
+        pass
+    assert isinstance(pbar.lock, nullcontext)
 
 
 @pytest.fixture
