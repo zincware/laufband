@@ -149,7 +149,6 @@ class Laufband(t.Generic[_T]):
                 heartbeat_timeout=heartbeat_timeout,
                 max_died_retries=max_died_retries,
             )
-
         self.cleanup = cleanup
         self.tqdm_kwargs = tqdm_kwargs or {}
 
@@ -165,6 +164,11 @@ class Laufband(t.Generic[_T]):
         the laufband generator marking the job as completed.
         """
         self._close_trigger = True
+
+    @property
+    def identifier(self) -> str:
+        """Unique identifier of this worker"""
+        return self.db.worker
 
     @property
     @_check_disabled
