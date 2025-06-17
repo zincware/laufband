@@ -205,11 +205,6 @@ class Laufband(t.Generic[_T]):
         with self.lock:
             return self.db.list_state("died")
 
-    @property
-    def identifier(self) -> str:
-        """Return the identifier of the worker."""
-        return self.db.worker
-
     def __len__(self) -> int:
         """Return the length of the data."""
         with self.lock:

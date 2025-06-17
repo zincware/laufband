@@ -310,7 +310,7 @@ def test_disable(tmp_path):
     os.chdir(tmp_path)
     data = list(range(100))
 
-    pbar = Laufband(data, disable=True)
+    pbar = Laufband(data, disable=True, identifier="myworker")
     assert pbar.disabled is True
 
     assert list(pbar) == data
@@ -334,6 +334,8 @@ def test_disable(tmp_path):
     with pbar.lock:
         pass
     assert isinstance(pbar.lock, nullcontext)
+
+    assert pbar.identifier == "myworker"
 
 
 @pytest.fixture
