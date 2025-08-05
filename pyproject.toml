@@ -58,4 +58,3 @@ exclude = [
 
 [project.scripts]
 laufband = 'laufband.cli:main'
-
