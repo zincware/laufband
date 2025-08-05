@@ -1,4 +1,5 @@
 import argparse
+import datetime
 from pathlib import Path
 from typing import Dict, List
 
@@ -18,6 +19,8 @@ from rich.table import Table
 from rich.text import Text
 
 from laufband.db import LaufbandDB
+
+ACTIVITY_TIMEOUT_SECONDS = 300  # 5 minutes
 
 
 class LaufbandStatusDisplay:
@@ -118,8 +121,6 @@ class LaufbandStatusDisplay:
 
         for worker in workers:
             # Determine if worker is active (seen in last 5 minutes)
-            import datetime
-
             try:
                 # SQLite CURRENT_TIMESTAMP format: '2024-01-01 12:00:00'
                 last_seen_str = worker["last_seen"]
@@ -132,7 +133,9 @@ class LaufbandStatusDisplay:
                     last_seen = last_seen.replace(tzinfo=datetime.timezone.utc)
                     now = datetime.datetime.now(datetime.timezone.utc)
                     time_diff = (now - last_seen).total_seconds()
-                    status = "Active" if time_diff < 300 else "Inactive"
+                    status = (
+                        "Active" if time_diff < ACTIVITY_TIMEOUT_SECONDS else "Inactive"
+                    )
                     status_color = "green" if status == "Active" else "red"
                 else:
                     status = "Unknown"
