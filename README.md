@@ -135,7 +135,7 @@ for atoms in worker:
         ase.io.write("frames.xyz", atoms, append=True)
 ```
 
-You can use the `laufband watch` to follow the progress
+You can use the `laufband watch` to follow the progress accross all active workers.
 
 ![Laufband CLI](https://github.com/user-attachments/assets/e3c8c345-994c-4b97-b3a3-7a14e460240b#gh-dark-mode-only "Laufband CLI")
 ![Laufband CLI](https://github.com/user-attachments/assets/1c07c641-add7-4c48-89f8-8da67a8061d1#gh-light-mode-only "Laufband CLI")
