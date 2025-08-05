@@ -263,14 +263,14 @@ def test_get_worker_info_with_retries(tmp_path: Path):
     worker = LaufbandDB(db_path, worker="retry_worker", max_died_retries=2)
     worker.create(3)
 
-    jobs = list(worker)
+    _ = list(worker)
 
     # Simulate some retries by marking jobs as died and reprocessing
     worker.finalize(0, "died")
     worker.finalize(1, "died")
 
     # Process died jobs again (this increments count)
-    jobs_retry = list(worker)  # Should get the died jobs back
+    _ = list(worker)  # Should get the died jobs back
 
     worker_info = worker.get_worker_info()
     worker_data = worker_info[0]
