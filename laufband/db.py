@@ -218,3 +218,60 @@ class LaufbandDB:
             )
             row = cursor.fetchone()
         return row[0] if row else None
+
+    def get_job_stats(self) -> dict[str, int]:
+        """Get counts of jobs in each state"""
+        stats = {}
+        states: list[T_STATE] = ["running", "pending", "failed", "completed", "died"]
+
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            for state in states:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM progress_table WHERE state = ?", (state,)
+                )
+                stats[state] = cursor.fetchone()[0]
+
+        return stats
+
+    def get_worker_info(self) -> list[dict]:
+        """Get information about all workers with their job statistics"""
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    w.worker,
+                    w.last_seen,
+                    COUNT(CASE WHEN p.state = 'running' THEN 1 END) as active_jobs,
+                    COUNT(CASE WHEN p.state = 'completed' THEN 1 END) as completed_jobs,
+                    COUNT(CASE WHEN p.state = 'failed' THEN 1 END) as failed_jobs,
+                    MAX(p.count) as max_retries
+                FROM worker_table w
+                LEFT JOIN progress_table p ON w.worker = p.worker
+                GROUP BY w.worker, w.last_seen
+                ORDER BY w.last_seen DESC
+            """)
+
+            workers = []
+            for row in cursor.fetchall():
+                (
+                    worker,
+                    last_seen,
+                    active_jobs,
+                    completed_jobs,
+                    failed_jobs,
+                    max_retries,
+                ) = row
+                workers.append(
+                    {
+                        "worker": worker,
+                        "last_seen": last_seen,
+                        "active_jobs": active_jobs or 0,
+                        "completed_jobs": completed_jobs or 0,
+                        "failed_jobs": failed_jobs or 0,
+                        "processed_jobs": (completed_jobs or 0) + (failed_jobs or 0),
+                        "max_retries": max_retries or 0,
+                    }
+                )
+
+        return workers
