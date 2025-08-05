@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
     "tqdm>=4.67.1",
     "flufl-lock>=8.1.0",
+    "rich>=14.0.0",
 ]
 
 [dependency-groups]
@@ -54,3 +55,7 @@ exclude = [
     "tests",
     "docs",
 ]
+
+[project.scripts]
+laufband = 'laufband.cli:main'
+
