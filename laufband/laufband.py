@@ -25,6 +25,7 @@ class Laufband(t.Generic[_T]):
         heartbeat_timeout: int | None = None,
         max_died_retries: int | None = None,
         disable: bool | None = None,
+        hash_fn: t.Callable[[t.Any], str] | None = None,
         tqdm_kwargs: dict[str, t.Any] | None = None,
     ):
         """Laufband generator for parallel processing using file-based locking.
@@ -100,20 +101,33 @@ class Laufband(t.Generic[_T]):
         """
         self.data = data
         
+        # Create UUID mapping for all items (keeps it simple and consistent)
+        import uuid
+        self._item_mapping = {}
+        
+        for item in data:
+            item_uuid = str(uuid.uuid4())
+            self._item_mapping[item_uuid] = item
+        
         # Create a graph_fn that returns a graph with disconnected nodes (no edges)
         def graph_fn():
             G = nx.DiGraph()
-            G.add_nodes_from(data)
+            for item_uuid in self._item_mapping.keys():
+                G.add_node(item_uuid)
+                # Store the actual item as node data for access
+                G.nodes[item_uuid]['value'] = self._item_mapping[item_uuid]
             return G
         
-        # Hash function that converts items to string task IDs, but maintain integer indices 
-        def hash_fn(item):
-            try:
-                # Use the index of the item in the data sequence
-                return str(self.data.index(item))
-            except ValueError:
-                # If item not in sequence, fall back to hash
-                return str(hash(item)) if hasattr(item, '__hash__') else str(id(item))
+        # Use default Laufband hash function if none provided
+        if hash_fn is None:
+            def laufband_hash_fn(item_uuid):
+                # Get the original item and use its index
+                original_item = self._item_mapping[item_uuid]
+                try:
+                    return str(data.index(original_item))
+                except ValueError:
+                    return str(id(original_item))
+            hash_fn = laufband_hash_fn
         
         # Fix default lock path for backwards compatibility
         if lock_path is None and lock is None:
@@ -202,4 +216,6 @@ class Laufband(t.Generic[_T]):
 
     def __iter__(self) -> Generator[_T, None, None]:
         """The generator that handles the iteration logic."""
-        yield from self._graphband
+        for item_uuid in self._graphband:
+            # Convert UUID back to original item
+            yield self._item_mapping[item_uuid]

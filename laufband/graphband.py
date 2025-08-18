@@ -58,10 +58,24 @@ class Graphband(t.Generic[_T]):
         ---------
         graph_fn : Callable[[], networkx.DiGraph]
             Function that returns the current graph state. Nodes are tasks,
-            edges are dependencies.
+            edges are dependencies. All nodes must be hashable (can be used as dict keys).
+            For non-hashable data items, create a mapping between hashable UUIDs and 
+            the actual data, storing the data in node attributes:
+            
+            Example for non-hashable items:
+                import uuid
+                item_mapping = {str(uuid.uuid4()): item for item in non_hashable_items}
+                
+                def graph_fn():
+                    G = nx.DiGraph()
+                    for uuid, item in item_mapping.items():
+                        G.add_node(uuid)
+                        G.nodes[uuid]['value'] = item
+                    return G
+                    
         hash_fn : Callable[[Any], str] | None
-            Function to compute task IDs from task items. If None, uses a default
-            hash function.
+            Function to compute task IDs from graph nodes. If None, uses a default
+            hash function. For UUID-mapped items, this should operate on the UUID keys.
         lock : Lock | None
             A lock object to ensure thread safety. If None, a new lock will be created.
         lock_path : Path | str | None
@@ -235,8 +249,10 @@ class Graphband(t.Generic[_T]):
                         self.db.create_from_graph(graph, self.hash_fn)
                 else:
                     self.db.create_from_graph(graph, self.hash_fn)
+            # Always update database with current graph to ensure all tasks are present
+            self.db.update_from_graph(graph, self.hash_fn)
 
-        # Get initial task count for progress bar
+        # Get initial task count for progress bar (must be inside lock after DB creation)
         with self.lock:
             total_tasks = len(self.db)
         

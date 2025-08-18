@@ -274,6 +274,28 @@ class GraphbandDB:
         """Update database with new tasks from graph."""
         with self.connect() as conn:
             cursor = conn.cursor()
+            # Check if progress_table exists, create if it doesn't
+            cursor.execute("""
+                SELECT name FROM sqlite_master WHERE type='table' AND name='progress_table'
+            """)
+            if not cursor.fetchone():
+                # Table doesn't exist, create it
+                cursor.execute("""
+                    CREATE TABLE progress_table (
+                        task_id TEXT PRIMARY KEY,
+                        state TEXT DEFAULT 'pending',
+                        worker TEXT,
+                        count INTEGER DEFAULT 0,
+                        task_data BLOB
+                    )
+                """)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS worker_table (
+                        worker TEXT PRIMARY KEY,
+                        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+            
             for node in graph.nodes():
                 task_id = hash_fn(node)
                 cursor.execute(
