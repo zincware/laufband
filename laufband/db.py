@@ -212,6 +212,14 @@ class GraphbandDB:
             conn.close()
 
 
+    def create(self, size: int):
+        """Create database for sequential tasks (backwards compatibility)."""
+        # Create a simple graph with numbered nodes
+        graph = nx.DiGraph()
+        for i in range(size):
+            graph.add_node(i)
+        self.create_from_graph(graph, str)
+
     def create_from_graph(self, graph: nx.DiGraph, hash_fn: t.Callable[[t.Any], str]):
         """Create database from a networkx graph."""
         with self.connect() as conn:
