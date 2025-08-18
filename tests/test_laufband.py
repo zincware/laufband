@@ -21,7 +21,7 @@ def test_iter_default(tmp_path):
 
     com_file = tmp_path / "laufband.sqlite"
 
-    for point in Laufband(data, cleanup=True):
+    for point in Laufband(data, cleanup=True, com=com_file):
         filecontent = json.loads(output.read_text())
         filecontent["data"].append(point)
         output.write_text(json.dumps(filecontent))
@@ -45,7 +45,7 @@ def test_iter(tmp_path):
             filecontent = json.loads(output.read_text())
             filecontent["data"].append(point)
             output.write_text(json.dumps(filecontent))
-            assert db.list_state("running") == [point]
+            assert db.list_state("running") == [str(point)]
 
     results = json.loads(output.read_text())["data"]
     assert results == data
@@ -132,9 +132,9 @@ def test_resume_progress(tmp_path):
 
     assert len(json.loads(output.read_text())["data"]) == 6
     assert db.list_state("running") == []
-    assert db.list_state("completed") == list(range(6))
+    assert db.list_state("completed") == [str(i) for i in range(6)]
     assert db.list_state("failed") == []
-    assert db.list_state("pending") == list(range(6, 10))
+    assert db.list_state("pending") == [str(i) for i in range(6, 10)]
 
     # resume processing
     for point in Laufband(data, lock=lock, com=db_path):
@@ -145,7 +145,7 @@ def test_resume_progress(tmp_path):
 
     assert len(json.loads(output.read_text())["data"]) == 10
     assert db.list_state("running") == []
-    assert db.list_state("completed") == list(range(10))
+    assert db.list_state("completed") == [str(i) for i in range(10)]
     assert db.list_state("failed") == []
     assert db.list_state("pending") == []
 
@@ -164,9 +164,9 @@ def test_failed(tmp_path):
                 raise ValueError("Simulated failure")
 
     assert db.list_state("running") == []
-    assert db.list_state("completed") == list(range(50))
-    assert db.list_state("failed") == [50]
-    assert db.list_state("pending") == list(range(51, 100))
+    assert db.list_state("completed") == [str(i) for i in range(50)]
+    assert db.list_state("failed") == ["50"]
+    assert db.list_state("pending") == [str(i) for i in range(51, 100)]
 
 
 def test_failed_via_break(tmp_path):
@@ -182,9 +182,9 @@ def test_failed_via_break(tmp_path):
             break
 
     assert db.list_state("running") == []
-    assert db.list_state("completed") == list(range(50))
-    assert db.list_state("failed") == [50]
-    assert db.list_state("pending") == list(range(51, 100))
+    assert db.list_state("completed") == [str(i) for i in range(50)]
+    assert db.list_state("failed") == ["50"]
+    assert db.list_state("pending") == [str(i) for i in range(51, 100)]
 
     assert pbar.running == []
     assert pbar.completed == list(range(50))
@@ -193,20 +193,25 @@ def test_failed_via_break(tmp_path):
     assert pbar.died == []
 
 
-def test_inconsistent_db(tmp_path):
-    """Test if laufband can handle inconsistent database."""
+def test_dynamic_db_expansion(tmp_path):
+    """Test if laufband can handle dynamic database expansion with unknown lengths."""
     db = LaufbandDB(tmp_path / "laufband1.sqlite")
 
+    # First run with 10 items
+    results1 = []
     for i in Laufband(list(range(10)), com=db.db_path):
-        pass
+        results1.append(i)
 
-    # same database, different size is not allowed
-    with pytest.raises(
-        ValueError,
-        match="The size of the data does not match the size of the database.",
-    ):
-        for i in Laufband(list(range(100)), com=db.db_path):
-            pass
+    assert results1 == list(range(10))
+
+    # Second run with 100 items - should work and add new items
+    results2 = []
+    for i in Laufband(list(range(100)), com=db.db_path):
+        results2.append(i)
+
+    # Should process the new items (10-99) that weren't in the first run
+    assert len(results2) == 90
+    assert set(results2) == set(range(10, 100))
 
 
 def test_identifier(tmp_path):

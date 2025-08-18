@@ -1,26 +1,14 @@
 import os
 import typing as t
 from collections.abc import Generator, Sequence
-from contextlib import nullcontext
 from pathlib import Path
 
+import networkx as nx
 from flufl.lock import Lock
-from tqdm import tqdm
 
-from laufband.db import LaufbandDB
+from laufband.graphband import Graphband
 
 _T = t.TypeVar("_T", covariant=True)
-
-
-def _check_disabled(func: t.Callable) -> t.Callable:
-    """Decorator to raise an error if Laufband is disabled."""
-
-    def wrapper(self, *args, **kwargs):
-        if self.disabled:
-            raise RuntimeError("Laufband is disabled. Cannot call this method.")
-        return func(self, *args, **kwargs)
-
-    return wrapper
 
 
 class Laufband(t.Generic[_T]):
@@ -66,7 +54,7 @@ class Laufband(t.Generic[_T]):
         failure_policy : str
             If an error occurs, the generator will always yield that error.
             With the "continue" policy, other processes will continue,
-            while with the "raise" policy, the other process will stop
+            while with the "stop" policy, the other process will stop
             and raise an exception that one process failed.
         heartbeat_timeout : int
             The timeout in seconds to consider a worker as dead if it has not been seen
@@ -110,50 +98,42 @@ class Laufband(t.Generic[_T]):
         ...        output_file.write_text(json.dumps(file_content))
 
         """
-        if heartbeat_timeout is None:
-            heartbeat_timeout = int(os.getenv("LAUFBAND_HEARTBEAT_TIMEOUT", 60 * 60))
-        if max_died_retries is None:
-            max_died_retries = int(os.getenv("LAUFBAND_MAX_DIED_RETRIES", 0))
-        if identifier is None:
-            identifier = os.getenv("LAUFBAND_IDENTIFIER", str(os.getpid()))
-        if lock_path is not None and lock is not None:
-            raise ValueError(
-                "You cannot set both `lock` and `lock_path`. Use one or the other."
-            )
-        if disable is None:
-            self.disabled = os.getenv("LAUFBAND_DISABLE", "0") == "1"
-        else:
-            self.disabled = disable
-
-        if lock_path is None:
-            lock_path = "laufband.lock"
-
         self.data = data
-        if self.disabled:
-            self.lock = nullcontext()
-        else:
-            self.lock = lock if lock is not None else Lock(Path(lock_path).as_posix())
-        self.com = Path(com or "laufband.sqlite")
-
-        if callable(identifier):
-            self.db = LaufbandDB(
-                self.com,
-                worker=identifier(),
-                heartbeat_timeout=heartbeat_timeout,
-                max_died_retries=max_died_retries,
-            )
-        else:
-            self.db = LaufbandDB(
-                self.com,
-                worker=identifier,
-                heartbeat_timeout=heartbeat_timeout,
-                max_died_retries=max_died_retries,
-            )
-        self.cleanup = cleanup
-        self.tqdm_kwargs = tqdm_kwargs or {}
-
-        self._close_trigger = False
-        self.failure_policy = failure_policy
+        
+        # Create a graph_fn that returns a graph with disconnected nodes (no edges)
+        def graph_fn():
+            G = nx.DiGraph()
+            G.add_nodes_from(data)
+            return G
+        
+        # Hash function that converts items to string task IDs, but maintain integer indices 
+        def hash_fn(item):
+            try:
+                # Use the index of the item in the data sequence
+                return str(self.data.index(item))
+            except ValueError:
+                # If item not in sequence, fall back to hash
+                return str(hash(item)) if hasattr(item, '__hash__') else str(id(item))
+        
+        # Fix default lock path for backwards compatibility
+        if lock_path is None and lock is None:
+            lock_path = "laufband.lock"
+        
+        # Create internal Graphband instance
+        self._graphband = Graphband(
+            graph_fn=graph_fn,
+            hash_fn=hash_fn,
+            lock=lock,
+            lock_path=lock_path,
+            com=com,
+            identifier=identifier,
+            cleanup=cleanup,
+            failure_policy=failure_policy,
+            heartbeat_timeout=heartbeat_timeout,
+            max_died_retries=max_died_retries,
+            disable=disable,
+            tqdm_kwargs=tqdm_kwargs,
+        )
 
     def close(self):
         """Exit out of the laufband generator.
@@ -163,114 +143,63 @@ class Laufband(t.Generic[_T]):
         Instead, you can use this function to exit
         the laufband generator marking the job as completed.
         """
-        self._close_trigger = True
+        self._graphband.close()
 
     @property
     def identifier(self) -> str:
         """Unique identifier of this worker"""
-        return self.db.worker
+        return self._graphband.identifier
 
     @property
-    @_check_disabled
+    def lock(self):
+        """Access to the underlying lock"""
+        return self._graphband.lock
+
+    @property
+    def disabled(self) -> bool:
+        """Whether Laufband is disabled"""
+        return self._graphband.disabled
+
+    @property
+    def com(self):
+        """Path to the communication/database file"""
+        return self._graphband.com
+
+    @property
     def completed(self) -> list[int]:
         """Return the indices of items that have been completed."""
-        with self.lock:
-            return self.db.list_state("completed")
+        # Convert string task IDs back to integers for backwards compatibility
+        task_ids = self._graphband.completed
+        return [int(task_id) for task_id in task_ids if task_id.isdigit()]
 
     @property
-    @_check_disabled
     def failed(self) -> list[int]:
         """Return the indices of items that have failed processing."""
-        with self.lock:
-            return self.db.list_state("failed")
+        task_ids = self._graphband.failed
+        return [int(task_id) for task_id in task_ids if task_id.isdigit()]
 
     @property
-    @_check_disabled
     def running(self) -> list[int]:
         """Return the indices of items that are currently being processed."""
-        with self.lock:
-            return self.db.list_state("running")
+        task_ids = self._graphband.running
+        return [int(task_id) for task_id in task_ids if task_id.isdigit()]
 
     @property
-    @_check_disabled
     def pending(self) -> list[int]:
         """Return the indices of items that are pending processing."""
-        with self.lock:
-            return self.db.list_state("pending")
+        task_ids = self._graphband.pending
+        return [int(task_id) for task_id in task_ids if task_id.isdigit()]
 
     @property
-    @_check_disabled
     def died(self) -> list[int]:
         """Return the indices of items that have been marked as 'died'."""
-        with self.lock:
-            return self.db.list_state("died")
+        task_ids = self._graphband.died
+        return [int(task_id) for task_id in task_ids if task_id.isdigit()]
 
     def __len__(self) -> int:
         """Return the length of the data."""
-        with self.lock:
-            return len(self.data)
+        return len(self.data)
 
     def __iter__(self) -> Generator[_T, None, None]:
         """The generator that handles the iteration logic."""
-        if self.disabled:
-            # we create the database anyhow, e.g. no issues with DVC outs
-            size = len(self.data)
-            if not self.com.exists():
-                self.db.create(size)
-
-            # If Laufband is disabled, yield from a simple tqdm iterator
-            yield from tqdm(self.data, **self.tqdm_kwargs)
-            return
-
-        with self.lock:
-            size = len(self.data)
-            if not self.com.exists():
-                self.db.create(size)
-            else:
-                if len(self.data) != len(self.db):
-                    raise ValueError(
-                        "The size of the data does not match the size of the database."
-                    )
-        # adapt tqdm to properly work with died jobs
-        tbar = tqdm(total=size, **self.tqdm_kwargs)
-        while True:
-            with self.lock:
-                completed = self.db.list_state("completed")
-
-                if self.failure_policy == "stop" and self.db.list_state("failed"):
-                    raise RuntimeError(
-                        "Another worker has failed. "
-                        "Stopping due to failure_policy='stop'."
-                    )
-
-                try:
-                    idx = next(self.db)
-                except StopIteration:
-                    # No more items to process
-                    break
-
-            # Update progress bar for completed items
-            tbar.n = len(completed)
-            tbar.refresh()
-
-            try:
-                yield self.data[idx]
-            except GeneratorExit:
-                with self.lock:
-                    self.db.finalize(idx, "failed")
-                raise
-
-            tbar.update(1)
-
-            with self.lock:
-                # After processing, mark as completed
-                self.db.finalize(idx, "completed")
-                completed = self.db.list_state("completed")
-                if len(completed) == size:
-                    if self.cleanup:
-                        self.com.unlink()
-                    return
-
-            if self._close_trigger:
-                self._close_trigger = False
-                break
+        yield from self._graphband

@@ -17,7 +17,7 @@ def simple_graph():
 def test_graphband_sequential(tmp_path):
     """Tasks should follow dependency order in a static DAG."""
     db_path = tmp_path / "graph.sqlite"
-    pbar = Graphband(graph_fn=simple_graph, com=db_path, cleanup=True)
+    pbar = Graphband(graph_fn=simple_graph, com=db_path, cleanup=False)
 
     results = []
     for node in pbar:
@@ -29,8 +29,10 @@ def test_graphband_sequential(tmp_path):
     assert results.index("B") < results.index("D")
     assert results.index("C") < results.index("D")
 
-    db = LaufbandDB(db_path)
-    assert set(db.list_state("completed")) == {"A", "B", "C", "D"}
+    # Check that all tasks were completed by using the same DB instance
+    completed_tasks = pbar.completed
+    expected_tasks = {pbar.hash_fn(node) for node in ["A", "B", "C", "D"]}
+    assert set(completed_tasks) == expected_tasks
 
 
 def test_graphband_custom_hash_fn(tmp_path):
@@ -43,9 +45,10 @@ def test_graphband_custom_hash_fn(tmp_path):
     db_path = tmp_path / "graph.sqlite"
     hash_fn = lambda x: f"task-{x}"
 
-    pbar = Graphband(graph_fn=graph_fn, com=db_path, hash_fn=hash_fn)
+    pbar = Graphband(graph_fn=graph_fn, com=db_path, hash_fn=hash_fn, cleanup=False)
     results = list(pbar)
 
-    db = LaufbandDB(db_path)
-    assert db.list_state("completed") == ["task-1", "task-2", "task-3"]
+    # Check using the Graphband instance
+    completed_tasks = pbar.completed
+    assert set(completed_tasks) == {"task-1", "task-2", "task-3"}
     assert results == [1, 2, 3]

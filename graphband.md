@@ -4,6 +4,7 @@
 - Each worker iterates the generator independently until it finds a new task not in DB.
 - A task hash is computed for each yielded item to serve as the unique ID.
 - Deduplication is handled centrally by the DB (atomic insert).
+- Remove the constraint that laufband only supports fixed / known length input sequences.
 
 3. Graphband (general DAG API)
 - New class laufband.Graphband accepts a graph_fn: Callable[[], networkx.DiGraph] that returns the current graph state.
