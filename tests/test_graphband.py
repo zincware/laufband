@@ -52,3 +52,24 @@ def test_graphband_custom_hash_fn(tmp_path):
     completed_tasks = pbar.completed
     assert set(completed_tasks) == {"task-1", "task-2", "task-3"}
     assert results == [1, 2, 3]
+
+def test_graphband_double_worker(tmp_path):
+    def graph_fn():
+        G = nx.DiGraph()
+        G.add_edges_from([(1, 2),(2, 4), (1, 3), (2, 5)])
+        return G
+    
+    db_path = tmp_path / "graph.sqlite"
+    pbar1 = Graphband(graph_fn=graph_fn, com=db_path)
+    pbar2 = Graphband(graph_fn=graph_fn, com=db_path)
+
+    pbar1_iter = iter(pbar1)
+    pbar2_iter = iter(pbar2)
+    
+    x1 = next(pbar1_iter)
+    x2 = next(pbar1_iter)
+    x3 = next(pbar2_iter)
+
+    assert x1 == 1
+    assert x2 in {2, 3}
+    assert x3 in {2, 3}
