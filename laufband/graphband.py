@@ -220,14 +220,7 @@ class Graphband(t.Generic[_T]):
             # but still create the database for consistency
             graph = self.graph_fn()
             if not self.com.exists():
-                if graph.number_of_edges() == 0 and hasattr(graph.nodes(), '__len__'):
-                    try:
-                        size = len(list(graph.nodes()))
-                        self.db.create(size)
-                    except (TypeError, AttributeError):
-                        self.db.create_from_graph(graph, self.hash_fn)
-                else:
-                    self.db.create_from_graph(graph, self.hash_fn)
+                self.db.create_from_graph(graph, self.hash_fn)
             
             nodes = list(nx.topological_sort(graph))
             yield from tqdm(nodes, **self.tqdm_kwargs)
@@ -237,18 +230,7 @@ class Graphband(t.Generic[_T]):
             # Initialize database with current graph
             graph = self.graph_fn()
             if not self.com.exists():
-                # Check if this is a simple sequence (no edges, nodes are sequence items)
-                if graph.number_of_edges() == 0 and hasattr(graph.nodes(), '__len__'):
-                    # This is likely a Laufband sequence, use old-style initialization
-                    try:
-                        # Try to get sequence length
-                        size = len(list(graph.nodes()))
-                        self.db.create(size)
-                    except (TypeError, AttributeError):
-                        # Fall back to graph initialization
-                        self.db.create_from_graph(graph, self.hash_fn)
-                else:
-                    self.db.create_from_graph(graph, self.hash_fn)
+                self.db.create_from_graph(graph, self.hash_fn)
             # Always update database with current graph to ensure all tasks are present
             self.db.update_from_graph(graph, self.hash_fn)
 

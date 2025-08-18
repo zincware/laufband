@@ -250,7 +250,9 @@ def test_graphband_large_dag_performance():
 
 
 def test_graphband_non_hashable_items(tmp_path):
-    """Test Graphband with non-hashable items using custom hash function."""
+    """Test Graphband with non-hashable items using UUID mapping as per requirements."""
+    import uuid
+    
     # Create non-hashable items (dictionaries)
     task_data = [
         {"name": "task_a", "deps": []},
@@ -259,28 +261,39 @@ def test_graphband_non_hashable_items(tmp_path):
         {"name": "task_d", "deps": ["task_b", "task_c"]},
     ]
     
-    def graph_with_non_hashable():
+    # Create UUID mapping as required by graphband.md
+    uuid_mapping = {}
+    name_to_uuid = {}
+    for task in task_data:
+        task_uuid = str(uuid.uuid4())
+        uuid_mapping[task_uuid] = task
+        name_to_uuid[task["name"]] = task_uuid
+    
+    def graph_with_uuid_mapping():
         G = nx.DiGraph()
         
-        # Add nodes (non-hashable dicts)
-        for task in task_data:
-            G.add_node(task)
+        # Add UUID nodes (hashable)
+        for task_uuid in uuid_mapping.keys():
+            G.add_node(task_uuid)
+            # Store the actual task data in node attributes
+            G.nodes[task_uuid]['value'] = uuid_mapping[task_uuid]
         
-        # Add edges based on dependencies
-        for task in task_data:
-            for dep_name in task["deps"]:
-                dep_task = next(t for t in task_data if t["name"] == dep_name)
-                G.add_edge(dep_task, task)
+        # Add edges based on dependencies using UUIDs
+        for task_uuid, task_data_item in uuid_mapping.items():
+            for dep_name in task_data_item["deps"]:
+                dep_uuid = name_to_uuid[dep_name]
+                G.add_edge(dep_uuid, task_uuid)
         
         return G
     
-    # Custom hash function using task name
-    def task_hash(task_dict):
-        return f"task_{task_dict['name']}"
+    # Custom hash function using task name from UUID mapping
+    def task_hash(task_uuid):
+        task_data_item = uuid_mapping[task_uuid]
+        return f"task_{task_data_item['name']}"
     
     db_path = tmp_path / "graph.sqlite"
     pbar = Graphband(
-        graph_fn=graph_with_non_hashable, 
+        graph_fn=graph_with_uuid_mapping, 
         hash_fn=task_hash, 
         com=db_path, 
         cleanup=False
@@ -288,12 +301,15 @@ def test_graphband_non_hashable_items(tmp_path):
     
     results = list(pbar)
     
-    # Should process all tasks
+    # Should process all UUIDs
     assert len(results) == 4
-    assert all(isinstance(task, dict) for task in results)
+    assert all(isinstance(result_uuid, str) for result_uuid in results)
+    
+    # Get the actual task data from UUIDs
+    result_tasks = [uuid_mapping[result_uuid] for result_uuid in results]
+    result_names = [task["name"] for task in result_tasks]
     
     # Should respect dependencies
-    result_names = [task["name"] for task in results]
     assert result_names.index("task_a") < result_names.index("task_b")
     assert result_names.index("task_a") < result_names.index("task_c") 
     assert result_names.index("task_b") < result_names.index("task_d")

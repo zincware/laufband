@@ -211,34 +211,6 @@ class GraphbandDB:
         finally:
             conn.close()
 
-    def create(self, size: int):
-        """Create database for sequential tasks (Laufband compatibility)."""
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE progress_table (
-                    task_id TEXT PRIMARY KEY,
-                    state TEXT DEFAULT 'pending',
-                    worker TEXT,
-                    count INTEGER DEFAULT 0,
-                    task_data BLOB
-                )
-            """)
-            for i in range(size):
-                cursor.execute(
-                    """
-                    INSERT INTO progress_table (task_id, state, worker, task_data)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (str(i), "pending", None, str(i).encode()),
-                )
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS worker_table (
-                    worker TEXT PRIMARY KEY,
-                    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.commit()
 
     def create_from_graph(self, graph: nx.DiGraph, hash_fn: t.Callable[[t.Any], str]):
         """Create database from a networkx graph."""

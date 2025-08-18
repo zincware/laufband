@@ -121,12 +121,12 @@ class Laufband(t.Generic[_T]):
         # Use default Laufband hash function if none provided
         if hash_fn is None:
             def laufband_hash_fn(item_uuid):
-                # Get the original item and use its index
+                # Get the original item and find its index by iterating
                 original_item = self._item_mapping[item_uuid]
-                try:
-                    return str(data.index(original_item))
-                except ValueError:
-                    return str(id(original_item))
+                for i, item in enumerate(data):
+                    if item is original_item:
+                        return str(i)
+                return str(id(original_item))  # Fallback if not found
             hash_fn = laufband_hash_fn
         
         # Fix default lock path for backwards compatibility
