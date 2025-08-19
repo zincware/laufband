@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-T_STATE = t.Literal["running", "pending", "failed", "completed", "died"]
+T_STATE = t.Literal["running", "failed", "completed", "died"]
 # failed: the job failed with some exit code
 # died: the python process was killed and the worker could not update the
 #       state of the job. Detected by another worker updating the database
@@ -126,14 +126,7 @@ class GraphbandDB:
                 WHERE task_id = (
                     SELECT task_id
                     FROM progress_table
-                    WHERE
-                        (
-                            state = 'pending'
-                        )
-                        OR
-                        (
-                            state = 'died' AND count - 1 < ?
-                        )
+                    WHERE (state IS NULL OR (state = 'died' AND count - 1 < ?))
                     ORDER BY task_id
                     LIMIT 1
                 )
@@ -208,13 +201,35 @@ class GraphbandDB:
 
     def create(self, size: int):
         """Create database for sequential tasks (backwards compatibility)."""
-
-        # Create a simple graph protocol with numbered nodes
-        def simple_protocol():
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE progress_table (
+                    task_id TEXT PRIMARY KEY,
+                    state TEXT,
+                    worker TEXT,
+                    count INTEGER DEFAULT 0
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS worker_table (
+                    worker TEXT PRIMARY KEY,
+                    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # For sequential tasks, add all tasks to progress_table immediately
+            # This maintains backward compatibility with old Laufband tests
             for i in range(size):
-                yield (i, set())  # No predecessors for simple sequential tasks
-
-        self.create_from_graph(simple_protocol(), str)
+                cursor.execute(
+                    """
+                    INSERT OR IGNORE INTO progress_table (task_id, state, worker)
+                    VALUES (?, ?, ?)
+                    """,
+                    (str(i), None, None),  # No initial state for sequential tasks
+                )
+            conn.commit()
 
     def create_empty(self):
         """Create empty database with tables."""
@@ -251,15 +266,7 @@ class GraphbandDB:
         """Add a single task with its dependencies."""
         with self.connect() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT OR IGNORE INTO progress_table (task_id, state, worker)
-                VALUES (?, ?, ?)
-                """,
-                (task_id, "pending", None),
-            )
-            
-            # Add dependencies
+            # Only add dependencies - don't add to progress_table until task is claimed
             for predecessor_id in predecessor_ids:
                 cursor.execute(
                     """
@@ -277,7 +284,7 @@ class GraphbandDB:
             cursor.execute("""
                 CREATE TABLE progress_table (
                     task_id TEXT PRIMARY KEY,
-                    state TEXT DEFAULT 'pending',
+                    state TEXT,
                     worker TEXT,
                     count INTEGER DEFAULT 0
                 )
@@ -287,22 +294,13 @@ class GraphbandDB:
                 CREATE TABLE IF NOT EXISTS dependencies (
                     task_id TEXT,
                     predecessor_id TEXT,
-                    PRIMARY KEY (task_id, predecessor_id),
-                    FOREIGN KEY (task_id) REFERENCES progress_table (task_id),
-                    FOREIGN KEY (predecessor_id) REFERENCES progress_table (task_id)
+                    PRIMARY KEY (task_id, predecessor_id)
                 )
             """)
 
-            # Process GraphTraversalProtocol
+            # Process GraphTraversalProtocol - only store dependencies
             for node, predecessors in graph:
                 task_id = hash_fn(node)
-                cursor.execute(
-                    """
-                    INSERT OR IGNORE INTO progress_table (task_id, state, worker)
-                    VALUES (?, ?, ?)
-                    """,
-                    (task_id, "pending", None),
-                )
                 
                 # Add dependencies
                 for predecessor in predecessors:
@@ -357,16 +355,9 @@ class GraphbandDB:
                     )
                 """)
 
-            # Process GraphTraversalProtocol
+            # Process GraphTraversalProtocol - only store dependencies
             for node, predecessors in graph:
                 task_id = hash_fn(node)
-                cursor.execute(
-                    """
-                    INSERT OR IGNORE INTO progress_table (task_id, state, worker)
-                    VALUES (?, ?, ?)
-                    """,
-                    (task_id, "pending", None),
-                )
                 
                 # Add dependencies
                 for predecessor in predecessors:
@@ -438,7 +429,7 @@ class GraphbandDB:
     def get_job_stats(self) -> dict[str, int]:
         """Get counts of jobs in each state"""
         stats = {}
-        states: list[T_STATE] = ["running", "pending", "failed", "completed", "died"]
+        states: list[T_STATE] = ["running", "failed", "completed", "died"]
 
         with self.connect() as conn:
             cursor = conn.cursor()

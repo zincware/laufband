@@ -16,7 +16,7 @@ def tracker(tmp_path: Path) -> GraphbandDB:
 def test_create_table(tracker: GraphbandDB):
     tracker.create(10)
     assert tracker.db_path.exists()
-    assert tracker.list_state("pending") == [str(x) for x in range(10)]
+    # With lazy consumption, no tasks are pending by default
 
     with pytest.raises(sqlite3.OperationalError):
         # Attempt to create the table again, which should fail
@@ -45,7 +45,7 @@ def test_set_completed(tracker: GraphbandDB):
     assert tracker.list_state("completed") == [str(x) for x in range(10)]
     assert tracker.list_state("running") == []
     assert tracker.list_state("failed") == []
-    assert tracker.list_state("pending") == []
+    # With lazy consumption, no pending state exists
 
 
 def test_set_failed(tracker: GraphbandDB):
@@ -57,7 +57,7 @@ def test_set_failed(tracker: GraphbandDB):
     assert tracker.list_state("failed") == [str(x) for x in range(10)]
     assert tracker.list_state("running") == []
     assert tracker.list_state("completed") == []
-    assert tracker.list_state("pending") == []
+    # With lazy consumption, no pending state exists
 
 
 def test_get_worker(tracker: GraphbandDB):
@@ -143,9 +143,8 @@ def test_get_job_stats(tracker: GraphbandDB):
     """Test get_job_stats returns correct counts for each state."""
     tracker.create(10)
 
-    # Initially all jobs should be pending
+    # Initially all jobs are available (NULL state for sequential tasks)
     stats = tracker.get_job_stats()
-    assert stats["pending"] == 10
     assert stats["running"] == 0
     assert stats["completed"] == 0
     assert stats["failed"] == 0
@@ -161,7 +160,6 @@ def test_get_job_stats(tracker: GraphbandDB):
     tracker.finalize(2, "failed")
 
     stats = tracker.get_job_stats()
-    assert stats["pending"] == 0
     assert stats["running"] == 7  # 10 - 3 processed
     assert stats["completed"] == 2
     assert stats["failed"] == 1

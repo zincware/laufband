@@ -200,12 +200,6 @@ class Graphband(t.Generic[_T]):
         with self.lock:
             return self.db.list_state("running")
 
-    @property
-    @_check_disabled
-    def pending(self) -> list[str]:
-        """Return the task IDs that are pending processing."""
-        with self.lock:
-            return self.db.list_state("pending")
 
     @property
     @_check_disabled
@@ -253,7 +247,7 @@ class Graphband(t.Generic[_T]):
                         candidate_task_id = self.hash_fn(node)
                         node_mapping[candidate_task_id] = node
                         
-                        # Add this node to database
+                        # Add this node to database dependencies only
                         predecessor_task_ids = {
                             self.hash_fn(pred) for pred in predecessors
                         }
@@ -264,26 +258,16 @@ class Graphband(t.Generic[_T]):
                         if not predecessors or predecessor_task_ids.issubset(
                             completed_task_ids
                         ):
-                            # Try to claim this task immediately
+                            # Claim this task immediately by adding it as running
                             with self.db.connect() as conn:
                                 cursor = conn.cursor()
                                 cursor.execute(
                                     """
-                                    UPDATE progress_table
-                                    SET state = 'running', worker = ?, count = count + 1
-                                    WHERE task_id = ? AND
-                                    (
-                                        state = 'pending'
-                                        OR
-                                        (state = 'died' AND count - 1 < ?)
-                                    )
+                                    INSERT OR IGNORE INTO progress_table (task_id, state, worker, count)
+                                    VALUES (?, 'running', ?, 1)
                                     RETURNING task_id
                                     """,
-                                    (
-                                        self.db.worker,
-                                        candidate_task_id,
-                                        self.db.max_died_retries,
-                                    ),
+                                    (candidate_task_id, self.db.worker),
                                 )
                                 row = cursor.fetchone()
                                 if row:
@@ -361,12 +345,12 @@ class Graphband(t.Generic[_T]):
         """Find a ready task from existing database entries."""
         with self.db.connect() as conn:
             cursor = conn.cursor()
-            # Find tasks that are pending/died and have all dependencies completed
+            # Find tasks that are died and have all dependencies completed
             cursor.execute(
                 """
                 SELECT pt.task_id
                 FROM progress_table pt
-                WHERE (pt.state = 'pending' OR (pt.state = 'died' AND pt.count - 1 < ?))
+                WHERE pt.state = 'died' AND pt.count - 1 < ?
                 AND NOT EXISTS (
                     SELECT 1 FROM dependencies d 
                     JOIN progress_table dep_pt ON d.predecessor_id = dep_pt.task_id
@@ -384,12 +368,7 @@ class Graphband(t.Generic[_T]):
                     """
                     UPDATE progress_table
                     SET state = 'running', worker = ?, count = count + 1
-                    WHERE task_id = ? AND
-                    (
-                        state = 'pending'
-                        OR
-                        (state = 'died' AND count - 1 < ?)
-                    )
+                    WHERE task_id = ? AND state = 'died' AND count - 1 < ?
                     RETURNING task_id
                     """,
                     (self.db.worker, task_id, self.db.max_died_retries),

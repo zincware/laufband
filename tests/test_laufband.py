@@ -134,7 +134,7 @@ def test_resume_progress(tmp_path):
     assert db.list_state("running") == []
     assert db.list_state("completed") == [str(i) for i in range(6)]
     assert db.list_state("failed") == []
-    assert db.list_state("pending") == [str(i) for i in range(6, 10)]
+    # With lazy consumption, pending tasks don't exist in DB
 
     # resume processing
     for point in Laufband(data, lock=lock, com=db_path):
@@ -147,7 +147,7 @@ def test_resume_progress(tmp_path):
     assert db.list_state("running") == []
     assert db.list_state("completed") == [str(i) for i in range(10)]
     assert db.list_state("failed") == []
-    assert db.list_state("pending") == []
+    # With lazy consumption, no pending state exists
 
 
 def test_failed(tmp_path):
@@ -166,7 +166,7 @@ def test_failed(tmp_path):
     assert db.list_state("running") == []
     assert db.list_state("completed") == [str(i) for i in range(50)]
     assert db.list_state("failed") == ["50"]
-    assert db.list_state("pending") == [str(i) for i in range(51, 100)]
+    # With lazy consumption, remaining tasks aren't in DB until needed
 
 
 def test_failed_via_break(tmp_path):
@@ -184,12 +184,12 @@ def test_failed_via_break(tmp_path):
     assert db.list_state("running") == []
     assert db.list_state("completed") == [str(i) for i in range(50)]
     assert db.list_state("failed") == ["50"]
-    assert db.list_state("pending") == [str(i) for i in range(51, 100)]
+    # With lazy consumption, pending tasks don't exist in DB
 
     assert pbar.running == []
     assert pbar.completed == list(range(50))
     assert pbar.failed == [50]
-    assert pbar.pending == list(range(51, 100))
+    # With lazy consumption, pending tasks don't exist in DB until needed
     assert pbar.died == []
 
 
@@ -266,7 +266,8 @@ def test_iter_finished(tmp_path):
         if idx == 50:
             assert len(pbar.completed) == 50
             assert len(pbar.running) == 1
-            assert len(pbar.pending) == 49
+            # With lazy consumption, tasks don't exist in DB until processed
+            # so no "pending" concept exists
 
     assert len(pbar.completed) == len(pbar)
 
@@ -325,8 +326,7 @@ def test_disable(tmp_path):
 
     assert not pbar.com.exists()
 
-    with pytest.raises(RuntimeError):
-        pbar.pending
+    # .pending property no longer exists with lazy consumption
     with pytest.raises(RuntimeError):
         pbar.completed
     with pytest.raises(RuntimeError):

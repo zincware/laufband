@@ -212,11 +212,6 @@ class Laufband(t.Generic[_T]):
         task_ids = self._graphband.running
         return [int(task_id) for task_id in task_ids if task_id.isdigit()]
 
-    @property
-    def pending(self) -> list[int]:
-        """Return the indices of items that are pending processing."""
-        task_ids = self._graphband.pending
-        return [int(task_id) for task_id in task_ids if task_id.isdigit()]
 
     @property
     def died(self) -> list[int]:

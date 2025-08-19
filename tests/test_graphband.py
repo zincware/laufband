@@ -88,7 +88,7 @@ def test_graphband_double_worker(tmp_path):
     assert x3 in {2, 3}
 
 
-def test_graphband_generator_input():
+def test_graphband_generator_input(tmp_path):
     """Test Graphband with generator-based lazy task discovery."""
 
     def task_generator():
@@ -103,7 +103,8 @@ def test_graphband_generator_input():
         for node in nx.topological_sort(G):
             yield (node, set(G.predecessors(node)))
 
-    pbar = Graphband(graph_fn=graph_from_generator(), cleanup=True)
+    db_path = tmp_path / "generator_input.sqlite"
+    pbar = Graphband(graph_fn=graph_from_generator(), com=db_path, cleanup=True)
     results = list(pbar)
 
     expected = [f"task-{i}" for i in range(5)]
@@ -172,7 +173,7 @@ def test_graphband_termination_conditions(tmp_path):
     assert len(completed_tasks) == 3
 
 
-def test_graphband_large_dag_performance():
+def test_graphband_large_dag_performance(tmp_path):
     """Test performance with larger DAG."""
 
     def large_graph():
@@ -185,7 +186,8 @@ def test_graphband_large_dag_performance():
         for node in nx.topological_sort(G):
             yield (node, set(G.predecessors(node)))
 
-    pbar = Graphband(graph_fn=large_graph(), cleanup=True)
+    db_path = tmp_path / "large_dag.sqlite"
+    pbar = Graphband(graph_fn=large_graph(), com=db_path, cleanup=True)
     results = list(pbar)
 
     # Should process all tasks in dependency order
