@@ -9,6 +9,18 @@ from laufband.graphband import Graphband
 
 _T = t.TypeVar("_T", covariant=True)
 
+class SequentialGraphProtocol:
+    def __init__(self, parent):
+        self.parent = parent
+
+    def __len__(self):
+        return len(self.parent.data)
+
+    def __iter__(self):
+        for idx, item in enumerate(self.parent.data):
+            task_id = str(idx)
+            self.parent._item_mapping[task_id] = item
+            yield (task_id, set())
 
 class Laufband(t.Generic[_T]):
     def __init__(
@@ -100,48 +112,14 @@ class Laufband(t.Generic[_T]):
         """
         self.data = data
 
-        # Store the data source for lazy evaluation
-        self._data_source = data
         self._item_mapping = {}
-        self._mapping_created = False
 
-        # Create a graph_fn that implements GraphTraversalProtocol with lazy evaluation
-        class LazyGraphProtocol:
-            def __init__(self, parent):
-                self.parent = parent
-
-            def __len__(self):
-                return len(self.parent._data_source)
-
-            def __iter__(self):
-                # Lazy evaluation - create mapping only when iteration is requested
-                if not self.parent._mapping_created:
-                    for item in self.parent._data_source:
-                        item_uuid = str(uuid.uuid4())
-                        self.parent._item_mapping[item_uuid] = item
-                    self.parent._mapping_created = True
-
-                # Yield nodes with no predecessors (disconnected graph)
-                for item_uuid in self.parent._item_mapping.keys():
-                    yield (item_uuid, set())
-
-        graph_fn = LazyGraphProtocol(self)
+        graph_fn = SequentialGraphProtocol(self)
 
         # Use default Laufband hash function if none provided
         if hash_fn is None:
-
-            def laufband_hash_fn(item_uuid):
-                # For lazy evaluation, we can't rely on iterating over original data
-                # Instead, use the UUID positions in the mapping
-                original_item = self._item_mapping[item_uuid]
-                uuid_list = list(self._item_mapping.keys())
-                try:
-                    index = uuid_list.index(item_uuid)
-                    return str(index)
-                except ValueError:
-                    return str(id(original_item))  # Fallback if not found
-
-            hash_fn = laufband_hash_fn
+            def hash_fn(item: str) -> str:
+                return item
 
         # Fix default lock path for backwards compatibility
         if lock_path is None and lock is None:
@@ -198,26 +176,26 @@ class Laufband(t.Generic[_T]):
         """Return the indices of items that have been completed."""
         # Convert string task IDs back to integers for backwards compatibility
         task_ids = self._graphband.completed
-        return [int(task_id) for task_id in task_ids if task_id.isdigit()]
+        return [int(task_id) for task_id in task_ids]
 
     @property
     def failed(self) -> list[int]:
         """Return the indices of items that have failed processing."""
         task_ids = self._graphband.failed
-        return [int(task_id) for task_id in task_ids if task_id.isdigit()]
+        return [int(task_id) for task_id in task_ids]
 
     @property
     def running(self) -> list[int]:
         """Return the indices of items that are currently being processed."""
         task_ids = self._graphband.running
-        return [int(task_id) for task_id in task_ids if task_id.isdigit()]
+        return [int(task_id) for task_id in task_ids]
 
 
     @property
     def died(self) -> list[int]:
         """Return the indices of items that have been marked as 'died'."""
         task_ids = self._graphband.died
-        return [int(task_id) for task_id in task_ids if task_id.isdigit()]
+        return [int(task_id) for task_id in task_ids]
 
     def __len__(self) -> int:
         """Return the length of the data."""
@@ -225,6 +203,5 @@ class Laufband(t.Generic[_T]):
 
     def __iter__(self) -> Generator[_T, None, None]:
         """The generator that handles the iteration logic."""
-        for item_uuid in self._graphband:
-            # Convert UUID back to original item
-            yield self._item_mapping[item_uuid]
+        for task_id in self._graphband:
+            yield self._item_mapping[task_id]
