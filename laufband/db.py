@@ -3,8 +3,8 @@ import os
 import sqlite3
 import threading
 import typing as t
-from contextlib import nullcontext
 from collections.abc import Iterator
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -68,6 +68,7 @@ class GraphbandDB:
     def _heartbeat_loop(self):
         """Background thread updating worker heartbeat and marking died workers."""
         while not self._heartbeat_stop_event.wait(timeout=self.heartbeat_interval):
+
             def heartbeat_operation():
                 try:
                     with self.connect() as conn:
@@ -78,7 +79,7 @@ class GraphbandDB:
                 except Exception:
                     # Continue running even if heartbeat update fails
                     pass
-            
+
             self._safe_db_operation(heartbeat_operation)
 
     def start_heartbeat(self):

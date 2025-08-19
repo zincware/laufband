@@ -107,8 +107,9 @@ class Graphband(t.Generic[_T]):
             The timeout in seconds to consider a worker as dead if it has not been seen
             in the last `heartbeat_timeout` seconds. This is used to mark jobs
             as "died" if the worker process is killed unexpectedly.
-            With the background heartbeat thread updating every 10 seconds, defaults to 30 seconds
-            or the value of the environment variable ``LAUFBAND_HEARTBEAT_TIMEOUT`` if set.
+            With the background heartbeat thread updating every 10 seconds,
+            defaults to 30 seconds or the value of the environment variable
+            ``LAUFBAND_HEARTBEAT_TIMEOUT`` if set.
         heartbeat_interval : float
             Interval in seconds between heartbeat updates. Defaults to 10.0 seconds.
         max_died_retries : int
