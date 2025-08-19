@@ -1,4 +1,3 @@
-import sqlite3
 import time
 from pathlib import Path
 
@@ -17,7 +16,7 @@ def test_create_table(tracker: GraphbandDB):
     tracker.create_empty()
     assert Path(tracker.db_path).exists()
     # Test database exists and has correct tables
-    
+
     with tracker.connect() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -35,7 +34,7 @@ def test_len(tracker: GraphbandDB):
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO progress_table (task_id, state) VALUES (?, 'pending')",
-                (str(i),)
+                (str(i),),
             )
             conn.commit()
     assert len(tracker) == 10
@@ -49,7 +48,7 @@ def test_next(tracker: GraphbandDB):
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
-                (str(i),)
+                (str(i),),
             )
             conn.commit()
 
@@ -66,7 +65,7 @@ def test_set_completed(tracker: GraphbandDB):
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
-                (str(i),)
+                (str(i),),
             )
             conn.commit()
 
@@ -86,7 +85,7 @@ def test_set_failed(tracker: GraphbandDB):
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
-                (str(i),)
+                (str(i),),
             )
             conn.commit()
 
@@ -106,10 +105,10 @@ def test_get_worker(tracker: GraphbandDB):
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
-                (str(i),)
+                (str(i),),
             )
             conn.commit()
-    
+
     tracker.set_worker("worker_1")
 
     for job in tracker:
@@ -140,7 +139,7 @@ def test_duplicate_worker_identifier(tmp_path: Path):
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
-                (str(i),)
+                (str(i),),
             )
             conn.commit()
 
@@ -164,7 +163,7 @@ def test_retry_killed(tmp_path: Path, max_died_retries: int):
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
-                (str(i),)
+                (str(i),),
             )
             conn.commit()
 
@@ -188,7 +187,7 @@ def test_heartbeat_timeout(tmp_path: Path):
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
-                (str(i),)
+                (str(i),),
             )
             conn.commit()
 
@@ -223,7 +222,7 @@ def test_get_job_stats(tracker: GraphbandDB):
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
-                (str(i),)
+                (str(i),),
             )
             conn.commit()
 
@@ -259,7 +258,7 @@ def test_get_worker_info_single_worker(tracker: GraphbandDB):
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
-                (str(i),)
+                (str(i),),
             )
             conn.commit()
     tracker.worker = "test_worker"
@@ -312,7 +311,7 @@ def test_get_worker_info_multiple_workers(tmp_path: Path):
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
-                (str(i),)
+                (str(i),),
             )
             conn.commit()
 
@@ -371,7 +370,7 @@ def test_get_worker_info_with_retries(tmp_path: Path):
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
-                (str(i),)
+                (str(i),),
             )
             conn.commit()
 

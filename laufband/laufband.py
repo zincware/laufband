@@ -123,7 +123,7 @@ class Laufband(t.Generic[_T]):
             def hash_fn(item: str) -> str:
                 return item
 
-        # Set default lock path 
+        # Set default lock path
         if lock_path is None and lock is None:
             lock_path = "laufband.lock"
 

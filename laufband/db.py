@@ -232,7 +232,6 @@ class GraphbandDB:
         finally:
             conn.close()
 
-
     def create_empty(self):
         """Create empty database with tables."""
         with self.connect() as conn:
@@ -279,8 +278,6 @@ class GraphbandDB:
                 )
             conn.commit()
 
-
-
     def finalize(self, task_id: str, state: T_STATE = "completed"):
         with self.connect() as conn:
             cursor = conn.cursor()
@@ -319,7 +316,6 @@ class GraphbandDB:
             )
             row = cursor.fetchone()
         return row[0] if row else None
-
 
     def get_job_stats(self) -> dict[str, int]:
         """Get counts of jobs in each state"""
