@@ -1,7 +1,7 @@
 import typing as t
+import uuid
 from collections.abc import Generator, Iterable
 from pathlib import Path
-import uuid
 
 import networkx as nx
 from flufl.lock import Lock
@@ -110,7 +110,6 @@ class Laufband(t.Generic[_T]):
         def graph_fn():
             # Lazy evaluation - create mapping only when graph is requested
             if not self._mapping_created:
-
                 for item in self._data_source:
                     item_uuid = str(uuid.uuid4())
                     self._item_mapping[item_uuid] = item

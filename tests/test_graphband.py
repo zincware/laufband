@@ -1,8 +1,8 @@
 import multiprocessing as mp
 import random
 import time
-from pathlib import Path
 import uuid
+from pathlib import Path
 
 import networkx as nx
 
