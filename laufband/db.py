@@ -43,6 +43,37 @@ class GraphbandDB:
         if self.worker is None:
             raise ValueError("Worker name must be set before iterating.")
 
+    def set_metadata(self, key: str, value: t.Any):
+        """Set a metadata key-value pair."""
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            """
+            )
+            cursor.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                (key, str(value)),
+            )
+            conn.commit()
+
+    def get_metadata(self, key: str) -> Optional[str]:
+        """Get a metadata value by key."""
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT value FROM metadata WHERE key = ?", (key,))
+                row = cursor.fetchone()
+                return row[0] if row else None
+            except sqlite3.OperationalError as e:
+                if "no such table" in str(e):
+                    return None
+                raise
+
     def set_worker(self, worker_name: str):
         """Set the worker name and reset worker checking state."""
         self.worker = worker_name
@@ -182,6 +213,8 @@ class GraphbandDB:
                     )
                     row = cursor.fetchone()
                     if row:
+                        self.update_worker(cursor)
+                        self.mark_died(cursor)
                         conn.commit()
                         yield row[0]
                         return
@@ -429,14 +462,19 @@ class GraphbandDB:
     def get_job_stats(self) -> dict[str, int]:
         """Get counts of jobs in each state"""
         stats = {}
-        states: list[T_STATE] = ["running", "failed", "completed", "died"]
+        states: list[str] = ["running", "failed", "completed", "died", "pending"]
 
         with self.connect() as conn:
             cursor = conn.cursor()
             for state in states:
-                cursor.execute(
-                    "SELECT COUNT(*) FROM progress_table WHERE state = ?", (state,)
-                )
+                if state == "pending":
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM progress_table WHERE state = 'pending' OR state IS NULL"
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM progress_table WHERE state = ?", (state,)
+                    )
                 stats[state] = cursor.fetchone()[0]
 
         return stats
@@ -500,6 +538,7 @@ class GraphbandDB:
             )
             row = cursor.fetchone()
             if row:
+                self.update_worker(cursor)
                 conn.commit()
                 return row[0]
             return None
@@ -546,6 +585,7 @@ class GraphbandDB:
             )
             row = cursor.fetchone()
             if row:
+                self.update_worker(cursor)
                 conn.commit()
                 return row[0]
             return None

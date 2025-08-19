@@ -231,6 +231,11 @@ class Graphband(t.Generic[_T]):
             # Initialize database if it doesn't exist
             if not self.com.exists():
                 self.db.create_empty()
+                try:
+                    total_tasks = len(self.graph_fn)
+                    self.db.set_metadata("total_tasks", total_tasks)
+                except (TypeError, AttributeError):
+                    pass  # No length available
 
         while True:
             task_id = None

@@ -62,23 +62,37 @@ class LaufbandStatusDisplay:
 
     def create_progress_bar(self, stats: Dict[str, int]) -> Panel:
         """Create overall progress bar"""
-        total = sum(stats.values())
-        completed = stats["completed"]
-        failed = stats["failed"]
-
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeRemainingColumn(),
-        )
-
-        progress.add_task(
-            f"Overall Progress ({completed + failed}/{total} complete)",
-            total=total,
-            completed=completed + failed,
-        )
+        total_from_metadata = self.db.get_metadata("total_tasks")
+        if total_from_metadata is not None:
+            total = int(total_from_metadata)
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(),
+            )
+            completed = stats.get("completed", 0)
+            failed = stats.get("failed", 0)
+            progress.add_task(
+                f"Overall Progress ({completed + failed}/{total} complete)",
+                total=total,
+                completed=completed + failed,
+            )
+        else:
+            total_discovered = sum(stats.values())
+            completed = stats.get("completed", 0)
+            failed = stats.get("failed", 0)
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+            )
+            progress.add_task(
+                f"Progress ({completed + failed}/{total_discovered} discovered)",
+                total=None,
+            )
 
         return Panel(progress, title="Overall Progress")
 
