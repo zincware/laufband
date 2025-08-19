@@ -257,23 +257,10 @@ class Graphband(t.Generic[_T]):
                         if not predecessors or predecessor_task_ids.issubset(
                             completed_task_ids
                         ):
-                            # Claim this task immediately by adding it as running
-                            # TODO: should be done via database!
-                            with self.db.connect() as conn:
-                                cursor = conn.cursor()
-                                cursor.execute(
-                                    """
-                                    INSERT OR IGNORE INTO progress_table (task_id, state, worker, count)
-                                    VALUES (?, 'running', ?, 1)
-                                    RETURNING task_id
-                                    """,
-                                    (candidate_task_id, self.db.worker),
-                                )
-                                row = cursor.fetchone()
-                                if row:
-                                    conn.commit()
-                                    task_id = row[0]
-                                    break
+                            # Claim this task immediately
+                            task_id = self.db.claim_task(candidate_task_id)
+                            if task_id:
+                                break
 
                         # If not ready, try to find another ready task
                         task_id = self._find_ready_task()
@@ -318,20 +305,7 @@ class Graphband(t.Generic[_T]):
                                 completed_task_ids
                             ):
                                 # Claim this task immediately
-                                with self.db.connect() as conn:
-                                    cursor = conn.cursor()
-                                    cursor.execute(
-                                        """
-                                        INSERT OR IGNORE INTO progress_table (task_id, state, worker, count)
-                                        VALUES (?, 'running', ?, 1)
-                                        RETURNING task_id
-                                        """,
-                                        (candidate_task_id, self.db.worker),
-                                    )
-                                    row = cursor.fetchone()
-                                    if row:
-                                        conn.commit()
-                                        task_id = row[0]
+                                task_id = self.db.claim_task(candidate_task_id)
 
                             # If we found a task, continue with the main loop
                             if task_id:
@@ -406,38 +380,9 @@ class Graphband(t.Generic[_T]):
 
     def _find_ready_task(self) -> str | None:
         """Find a ready task from existing database entries."""
-        with self.db.connect() as conn:
-            cursor = conn.cursor()
-            # Find tasks that are died and have all dependencies completed
-            cursor.execute(
-                """
-                SELECT pt.task_id
-                FROM progress_table pt
-                WHERE pt.state = 'died' AND pt.count - 1 < ?
-                AND NOT EXISTS (
-                    SELECT 1 FROM dependencies d
-                    JOIN progress_table dep_pt ON d.predecessor_id = dep_pt.task_id
-                    WHERE d.task_id = pt.task_id AND dep_pt.state != 'completed'
-                )
-                LIMIT 1
-                """,
-                (self.db.max_died_retries,),
-            )
-            row = cursor.fetchone()
-            if row:
-                task_id = row[0]
-                # Try to claim it
-                cursor.execute(
-                    """
-                    UPDATE progress_table
-                    SET state = 'running', worker = ?, count = count + 1
-                    WHERE task_id = ? AND state = 'died' AND count - 1 < ?
-                    RETURNING task_id
-                    """,
-                    (self.db.worker, task_id, self.db.max_died_retries),
-                )
-                claimed_row = cursor.fetchone()
-                if claimed_row:
-                    conn.commit()
-                    return claimed_row[0]
+        # Find a died task that can be retried
+        task_id = self.db.find_ready_died_task()
+        if task_id:
+            # Try to claim it
+            return self.db.claim_died_task(task_id)
         return None

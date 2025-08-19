@@ -482,3 +482,70 @@ class GraphbandDB:
                 )
 
         return workers
+
+    def claim_task(self, task_id: str) -> str | None:
+        """Claim a task by setting it as running for this worker.
+        
+        Returns the task_id if successfully claimed, None otherwise.
+        """
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO progress_table (task_id, state, worker, count)
+                VALUES (?, 'running', ?, 1)
+                RETURNING task_id
+                """,
+                (task_id, self.worker),
+            )
+            row = cursor.fetchone()
+            if row:
+                conn.commit()
+                return row[0]
+            return None
+
+    def find_ready_died_task(self) -> str | None:
+        """Find a died task that has all dependencies completed and can be retried."""
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            # Find tasks that are died and have all dependencies completed
+            cursor.execute(
+                """
+                SELECT pt.task_id
+                FROM progress_table pt
+                WHERE pt.state = 'died' AND pt.count - 1 < ?
+                AND NOT EXISTS (
+                    SELECT 1 FROM dependencies d
+                    JOIN progress_table dep_pt ON d.predecessor_id = dep_pt.task_id
+                    WHERE d.task_id = pt.task_id AND dep_pt.state != 'completed'
+                )
+                LIMIT 1
+                """,
+                (self.max_died_retries,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return row[0]
+            return None
+
+    def claim_died_task(self, task_id: str) -> str | None:
+        """Try to claim a died task by updating it to running state.
+        
+        Returns the task_id if successfully claimed, None otherwise.
+        """
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE progress_table
+                SET state = 'running', worker = ?, count = count + 1
+                WHERE task_id = ? AND state = 'died' AND count - 1 < ?
+                RETURNING task_id
+                """,
+                (self.worker, task_id, self.max_died_retries),
+            )
+            row = cursor.fetchone()
+            if row:
+                conn.commit()
+                return row[0]
+            return None
