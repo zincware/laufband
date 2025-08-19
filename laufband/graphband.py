@@ -234,6 +234,7 @@ class Graphband(t.Generic[_T]):
 
         while True:
             task_id = None
+            should_return = False
 
             with self.lock:
                 # Check for stop conditions
@@ -248,87 +249,43 @@ class Graphband(t.Generic[_T]):
 
                 # If no ready task found and generator not exhausted, consume more
                 while task_id is None and not graph_exhausted:
-                    try:
-                        node, predecessors = next(graph_iterator)
-                        candidate_task_id = self.hash_fn(node)
-                        node_mapping[candidate_task_id] = node
-
-                        # Add this node to database dependencies only
-                        predecessor_task_ids = {
-                            self.hash_fn(pred) for pred in predecessors
-                        }
-                        self.db.add_task(candidate_task_id, predecessor_task_ids)
-
-                        # Check if this new task is ready (all dependencies satisfied)
-                        completed_task_ids = set(self.db.list_state("completed"))
-                        if not predecessors or predecessor_task_ids.issubset(
-                            completed_task_ids
-                        ):
-                            # Claim this task immediately
-                            task_id = self.db.claim_task(candidate_task_id)
-                            if task_id:
-                                break
-
-                        # If not ready, try to find another ready task
-                        task_id = self._find_ready_task()
-
-                    except StopIteration:
-                        graph_exhausted = True
+                    (
+                        claimed_task_id,
+                        exhausted,
+                    ) = self._process_next_task_from_graph(
+                        graph_iterator, node_mapping
+                    )
+                    graph_exhausted = exhausted
+                    if exhausted:
                         break
 
-                # If still no task, check if we're done or need more from generator
-                if task_id is None:
-                    if graph_exhausted:
-                        # No more tasks from generator and no ready tasks found
-                        # Check if we're completely done
-                        completed = self.db.list_state("completed")
-                        total_tasks = len(self.db)
-                        if len(completed) == total_tasks:
-                            if self.cleanup:
-                                self.com.unlink()
-                            if tbar:
-                                tbar.close()
-                            return
-                        # Otherwise, still have uncompleted tasks but they may have dependencies
-                        # that aren't satisfied yet - this shouldn't happen with SequentialGraphProtocol
-                        # but could happen with other protocols
+                    if claimed_task_id:
+                        task_id = claimed_task_id
                         break
-                    else:
-                        # Try one more time to see if generator is exhausted
-                        try:
-                            node, predecessors = next(graph_iterator)
-                            candidate_task_id = self.hash_fn(node)
-                            node_mapping[candidate_task_id] = node
 
-                            # Add this node to database dependencies only
-                            predecessor_task_ids = {
-                                self.hash_fn(pred) for pred in predecessors
-                            }
-                            self.db.add_task(candidate_task_id, predecessor_task_ids)
+                    # If not ready, try to find another ready task from DB
+                    task_id = self._find_ready_task()
 
-                            # Check if this new task is ready
-                            completed_task_ids = set(self.db.list_state("completed"))
-                            if not predecessors or predecessor_task_ids.issubset(
-                                completed_task_ids
-                            ):
-                                # Claim this task immediately
-                                task_id = self.db.claim_task(candidate_task_id)
+                # If still no task, it means graph is exhausted and nothing is ready
+                if task_id is None and graph_exhausted:
+                    # Check if we're completely done
+                    completed = self.db.list_state("completed")
+                    total_tasks = len(self.db)
+                    if len(completed) == total_tasks:
+                        if self.cleanup:
+                            self.com.unlink()
+                        if tbar:
+                            tbar.close()
+                        should_return = True
 
-                            # If we found a task, continue with the main loop
-                            if task_id:
-                                continue
-                        except StopIteration:
-                            graph_exhausted = True
-                            # Now that graph is exhausted, check completion immediately
-                            completed = self.db.list_state("completed")
-                            total_tasks = len(self.db)
-                            if len(completed) == total_tasks:
-                                if self.cleanup:
-                                    self.com.unlink()
-                                if tbar:
-                                    tbar.close()
-                                return
-                    break
+            if should_return:
+                return
+
+            if task_id is None:
+                # No task found, and we are not done yet.
+                # This means other workers are busy or there is a deadlock.
+                # The original code would break the main loop.
+                break
 
             # Initialize progress bar if not done yet
             if tbar is None:
@@ -384,6 +341,33 @@ class Graphband(t.Generic[_T]):
 
         if tbar:
             tbar.close()
+
+    def _process_next_task_from_graph(
+        self,
+        graph_iterator: Iterator[tuple[_T, set[_T]]],
+        node_mapping: dict[str, _T],
+    ) -> tuple[str | None, bool]:
+        """
+        Gets next task from graph, adds to DB, and if ready, claims it.
+        Returns (claimed_task_id | None, graph_exhausted)
+        """
+        try:
+            node, predecessors = next(graph_iterator)
+        except StopIteration:
+            return None, True
+
+        candidate_task_id = self.hash_fn(node)
+        node_mapping[candidate_task_id] = node
+
+        predecessor_task_ids = {self.hash_fn(pred) for pred in predecessors}
+        self.db.add_task(candidate_task_id, predecessor_task_ids)
+
+        completed_task_ids = set(self.db.list_state("completed"))
+        if not predecessors or predecessor_task_ids.issubset(completed_task_ids):
+            task_id = self.db.claim_task(candidate_task_id)
+            return task_id, False
+
+        return None, False
 
     def _find_ready_task(self) -> str | None:
         """Find a ready task from existing database entries."""
