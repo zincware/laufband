@@ -56,20 +56,20 @@ class Graphband(t.Generic[_T]):
         graph_fn : Callable[[], networkx.DiGraph]
             Function that returns the current graph state. Nodes are tasks,
             edges are dependencies. All nodes must be hashable (can be used as dict keys).
-            For non-hashable data items, create a mapping between hashable UUIDs and 
+            For non-hashable data items, create a mapping between hashable UUIDs and
             the actual data, storing the data in node attributes:
-            
+
             Example for non-hashable items:
                 import uuid
                 item_mapping = {str(uuid.uuid4()): item for item in non_hashable_items}
-                
+
                 def graph_fn():
                     G = nx.DiGraph()
                     for uuid, item in item_mapping.items():
                         G.add_node(uuid)
                         G.nodes[uuid]['value'] = item
                     return G
-                    
+
         hash_fn : Callable[[Any], str] | None
             Function to compute task IDs from graph nodes. If None, uses a default
             hash function. For UUID-mapped items, this should operate on the UUID keys.
@@ -133,7 +133,7 @@ class Graphband(t.Generic[_T]):
 
         self.graph_fn = graph_fn
         self.hash_fn = hash_fn or _default_hash_fn
-        
+
         if self.disabled:
             self.lock = nullcontext()
         else:
@@ -218,7 +218,7 @@ class Graphband(t.Generic[_T]):
             graph = self.graph_fn()
             if not self.com.exists():
                 self.db.create_from_graph(graph, self.hash_fn)
-            
+
             nodes = list(nx.topological_sort(graph))
             yield from tqdm(nodes, **self.tqdm_kwargs)
             return
@@ -234,17 +234,17 @@ class Graphband(t.Generic[_T]):
         # Get initial task count for progress bar (must be inside lock after DB creation)
         with self.lock:
             total_tasks = len(self.db)
-        
+
         tbar = tqdm(total=total_tasks, **self.tqdm_kwargs)
-        
+
         while True:
             with self.lock:
                 # Re-evaluate graph state for dynamic updates
                 current_graph = self.graph_fn()
-                
+
                 # Update database with any new tasks
                 self.db.update_from_graph(current_graph, self.hash_fn)
-                
+
                 completed = self.db.list_state("completed")
 
                 if self.failure_policy == "stop" and self.db.list_state("failed"):
@@ -254,7 +254,9 @@ class Graphband(t.Generic[_T]):
                     )
 
                 try:
-                    ready_task_iter = self.db.get_ready_task(current_graph, self.hash_fn)
+                    ready_task_iter = self.db.get_ready_task(
+                        current_graph, self.hash_fn
+                    )
                     task_id = next(ready_task_iter)
                 except StopIteration:
                     # No more ready tasks
@@ -272,13 +274,13 @@ class Graphband(t.Generic[_T]):
                 if self.hash_fn(node) == task_id:
                     task_item = node
                     break
-            
+
             if task_item is None:
                 # This shouldn't happen, but handle gracefully
                 with self.lock:
                     self.db.finalize(task_id, "failed")
                 continue
-            
+
             try:
                 yield task_item
             except GeneratorExit:

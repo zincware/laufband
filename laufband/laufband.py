@@ -1,6 +1,5 @@
-import os
 import typing as t
-from collections.abc import Generator, Sequence, Iterable
+from collections.abc import Generator, Iterable
 from pathlib import Path
 
 import networkx as nx
@@ -100,31 +99,33 @@ class Laufband(t.Generic[_T]):
 
         """
         self.data = data
-        
+
         # Store the data source for lazy evaluation
         self._data_source = data
         self._item_mapping = {}
         self._mapping_created = False
-        
+
         # Create a graph_fn that returns a graph with disconnected nodes (no edges)
         def graph_fn():
             # Lazy evaluation - create mapping only when graph is requested
             if not self._mapping_created:
                 import uuid
+
                 for item in self._data_source:
                     item_uuid = str(uuid.uuid4())
                     self._item_mapping[item_uuid] = item
                 self._mapping_created = True
-            
+
             G = nx.DiGraph()
             for item_uuid in self._item_mapping.keys():
                 G.add_node(item_uuid)
                 # Store the actual item as node data for access
-                G.nodes[item_uuid]['value'] = self._item_mapping[item_uuid]
+                G.nodes[item_uuid]["value"] = self._item_mapping[item_uuid]
             return G
-        
+
         # Use default Laufband hash function if none provided
         if hash_fn is None:
+
             def laufband_hash_fn(item_uuid):
                 # For lazy evaluation, we can't rely on iterating over original data
                 # Instead, use the UUID positions in the mapping
@@ -135,12 +136,13 @@ class Laufband(t.Generic[_T]):
                     return str(index)
                 except ValueError:
                     return str(id(original_item))  # Fallback if not found
+
             hash_fn = laufband_hash_fn
-        
+
         # Fix default lock path for backwards compatibility
         if lock_path is None and lock is None:
             lock_path = "laufband.lock"
-        
+
         # Create internal Graphband instance
         self._graphband = Graphband(
             graph_fn=graph_fn,

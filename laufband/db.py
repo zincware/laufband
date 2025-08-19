@@ -155,35 +155,39 @@ class GraphbandDB:
             else:
                 raise StopIteration
 
-    def get_ready_task(self, graph: nx.DiGraph, hash_fn: t.Callable[[t.Any], str]) -> Iterator[str]:
+    def get_ready_task(
+        self, graph: nx.DiGraph, hash_fn: t.Callable[[t.Any], str]
+    ) -> Iterator[str]:
         """Get next ready task that has all dependencies completed."""
         with self.connect() as conn:
             cursor = conn.cursor()
-            
+
             # Get all completed tasks and map them back to original nodes
             cursor.execute(
                 "SELECT task_id FROM progress_table WHERE state = 'completed'"
             )
             completed_task_ids = {row[0] for row in cursor.fetchall()}
-            
+
             # Find tasks with all dependencies completed
             for node in graph.nodes():
                 task_id = hash_fn(node)
-                
+
                 # Check if this task is ready (all predecessors completed)
                 predecessors = set(graph.predecessors(node))
                 predecessor_task_ids = {hash_fn(pred) for pred in predecessors}
-                
-                if not predecessors or predecessor_task_ids.issubset(completed_task_ids):
+
+                if not predecessors or predecessor_task_ids.issubset(
+                    completed_task_ids
+                ):
                     # Try to claim this task
                     cursor.execute(
                         """
                         UPDATE progress_table
                         SET state = 'running', worker = ?, count = count + 1
-                        WHERE task_id = ? AND 
+                        WHERE task_id = ? AND
                         (
                             state = 'pending'
-                            OR 
+                            OR
                             (state = 'died' AND count - 1 < ?)
                         )
                         RETURNING task_id
@@ -197,7 +201,7 @@ class GraphbandDB:
                         conn.commit()
                         yield row[0]
                         return
-            
+
             self.update_worker(cursor)
             self.mark_died(cursor)
             conn.commit()
@@ -210,7 +214,6 @@ class GraphbandDB:
             yield conn
         finally:
             conn.close()
-
 
     def create(self, size: int):
         """Create database for sequential tasks (backwards compatibility)."""
@@ -273,7 +276,7 @@ class GraphbandDB:
                         last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
-            
+
             for node in graph.nodes():
                 task_id = hash_fn(node)
                 cursor.execute(

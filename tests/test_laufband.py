@@ -361,25 +361,26 @@ def test_laufband_as_graphband_wrapper(tmp_path):
     """Test that Laufband properly wraps Graphband with disconnected nodes."""
     data = list(range(10))
     pbar = Laufband(data, com=tmp_path / "laufband.sqlite", cleanup=False)
-    
+
     # Should process all items without dependencies
     results = list(pbar)
     assert set(results) == set(data)
-    
+
     # Should have no failures since no dependencies
     assert len(pbar.failed) == 0
 
 
 def test_laufband_generator_support(tmp_path):
     """Test that Laufband works with generators (lazy discovery)."""
+
     def data_generator():
         for i in range(5):
             yield f"item-{i}"
-    
+
     # Convert generator to list since Laufband expects sequence
     data = list(data_generator())
     pbar = Laufband(data, com=tmp_path / "laufband.sqlite", cleanup=True)
-    
+
     results = list(pbar)
     expected = [f"item-{i}" for i in range(5)]
     assert set(results) == set(expected)
@@ -388,12 +389,14 @@ def test_laufband_generator_support(tmp_path):
 def test_laufband_hash_function_behavior(tmp_path):
     """Test Laufband's hash function behavior for task identity."""
     data = ["a", "b", "c"]
-    pbar = Laufband(data, com=tmp_path / "laufband.sqlite", cleanup=False)  # Don't cleanup so we can check state
-    
+    pbar = Laufband(
+        data, com=tmp_path / "laufband.sqlite", cleanup=False
+    )  # Don't cleanup so we can check state
+
     # Process items
     results = list(pbar)
     assert set(results) == set(data)
-    
+
     # Task IDs should be string indices for compatibility
     completed_task_ids = pbar.completed
     expected_indices = [0, 1, 2]  # Indices of items in data
@@ -402,21 +405,22 @@ def test_laufband_hash_function_behavior(tmp_path):
 
 def test_laufband_unknown_length_sequences(tmp_path):
     """Test that Laufband now supports unknown length sequences."""
+
     class UnknownLengthSequence:
         def __init__(self, data):
             self.data = data
-            
+
         def __getitem__(self, index):
             return self.data[index]
-            
+
         def __iter__(self):
             return iter(self.data)
-            
+
         # Intentionally no __len__ method
-    
+
     data = UnknownLengthSequence([1, 2, 3, 4, 5])
     pbar = Laufband(data, com=tmp_path / "laufband.sqlite", cleanup=True)
-    
+
     # Should work even without known length
     results = list(pbar)
     assert set(results) == {1, 2, 3, 4, 5}
@@ -426,7 +430,7 @@ def test_laufband_with_custom_hash_function(tmp_path):
     """Test Laufband with custom hash function for task identity."""
     # Use simple objects but with custom hash function
     data = ["task_alpha", "task_beta", "task_gamma"]
-    
+
     # Custom hash function that works with UUID mapping
     # The function receives item_uuid, so we need to access the original item via the mapping
     def custom_hash(item_uuid):
@@ -434,14 +438,16 @@ def test_laufband_with_custom_hash_function(tmp_path):
         # In practice, users would structure this differently
         # For this test, let's just create a hash based on the UUID itself
         return f"custom-uuid-{item_uuid[:8]}"
-    
-    pbar = Laufband(data, hash_fn=custom_hash, com=tmp_path / "laufband.sqlite", cleanup=False)
-    
+
+    pbar = Laufband(
+        data, hash_fn=custom_hash, com=tmp_path / "laufband.sqlite", cleanup=False
+    )
+
     # Should process all items using custom hash function
     results = list(pbar)
     assert len(results) == 3
     assert set(results) == {"task_alpha", "task_beta", "task_gamma"}
-    
+
     # Verify the custom hash function was used for task IDs
     underlying_completed = pbar._graphband.completed
     # Task IDs should start with "custom-uuid-" followed by the first 8 chars of UUID
@@ -453,19 +459,21 @@ def test_laufband_non_hashable_items(tmp_path):
     """Test Laufband with non-hashable items (lists)."""
     # Non-hashable data - lists cannot be dictionary keys
     data = [[1, 2], [3, 4], [5, 6]]
-    
+
     pbar = Laufband(data, com=tmp_path / "laufband.sqlite", cleanup=False)
-    
+
     # Should process all items correctly
     results = list(pbar)
     assert len(results) == 3
     assert all(isinstance(item, list) for item in results)
-    
+
     # Results should contain all original lists
-    results_set = {tuple(item) for item in results}  # Convert to tuples for set comparison
+    results_set = {
+        tuple(item) for item in results
+    }  # Convert to tuples for set comparison
     expected_set = {(1, 2), (3, 4), (5, 6)}
     assert results_set == expected_set
-    
+
     # Should have processed all tasks
     assert len(pbar.completed) == 3
 
@@ -474,23 +482,23 @@ def test_laufband_mixed_hashable_non_hashable(tmp_path):
     """Test Laufband with mixed hashable and non-hashable items."""
     # Mix of hashable and non-hashable items
     data = [
-        "string",           # hashable
-        [1, 2, 3],         # non-hashable list
-        42,                # hashable
+        "string",  # hashable
+        [1, 2, 3],  # non-hashable list
+        42,  # hashable
         {"key": "value"},  # non-hashable dict
-        (1, 2),           # hashable tuple
+        (1, 2),  # hashable tuple
     ]
-    
+
     pbar = Laufband(data, com=tmp_path / "laufband.sqlite", cleanup=False)
-    
+
     results = list(pbar)
     assert len(results) == 5
-    
+
     # Check each type is preserved
     result_types = [type(item).__name__ for item in results]
     expected_types = ["str", "list", "int", "dict", "tuple"]
     assert set(result_types) == set(expected_types)
-    
+
     # Check specific values are preserved
     assert "string" in results
     assert [1, 2, 3] in results
@@ -504,26 +512,29 @@ def test_laufband_hashable_objects_with_complex_hash(tmp_path):
     # Use tuples (hashable) but with custom identification
     data = [
         ("user", 1, "john"),
-        ("user", 2, "jane"), 
+        ("user", 2, "jane"),
         ("user", 3, "bob"),
     ]
-    
+
     # Custom hash function using specific tuple elements
     def user_hash(item_uuid):
         # Get the original item from UUID mapping
         # This function operates on UUIDs, so we need to access the underlying data
         return f"user_{id(item_uuid)}"  # Simple example using object id
-    
-    pbar = Laufband(data, hash_fn=user_hash, com=tmp_path / "laufband.sqlite", cleanup=False)
-    
+
+    pbar = Laufband(
+        data, hash_fn=user_hash, com=tmp_path / "laufband.sqlite", cleanup=False
+    )
+
     results = list(pbar)
     assert len(results) == 3
     assert all(isinstance(item, tuple) for item in results)
     assert all(item[0] == "user" for item in results)
-    
+
     # Verify all user data is present
     user_ids = {item[1] for item in results}
     assert user_ids == {1, 2, 3}
+
 
 def test_consume_generator(tmp_path):
     """Test consuming a generator with Laufband."""
