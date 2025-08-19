@@ -217,37 +217,50 @@ class Graphband(t.Generic[_T]):
     def __iter__(self) -> Generator[_T, None, None]:
         """The generator that handles the iteration logic."""
         if self.disabled:
-            # For disabled mode, consume the graph once and iterate
-            if callable(self.graph_fn):
-                graph_iter = self.graph_fn()
-            else:
-                graph_iter = self.graph_fn
-            yield from tqdm((node for node, _ in graph_iter), **self.tqdm_kwargs)
+            # For disabled mode, iterate over the graph protocol
+            yield from tqdm((node for node, _ in self.graph_fn), **self.tqdm_kwargs)
             return
 
-        # Handle generator vs callable logic:
-        # - Callables return fresh generators each time (for fixed graphs)
-        # - Generators are consumed once and cached (for lazy evaluation)
-
-        # Consume generator once and cache for reuse
-        if callable(self.graph_fn):
-            # Fixed graph via callable
-            graph_data = list(self.graph_fn())
-        else:
-            # Fixed graph via generator (lazy evaluation)
-            graph_data = list(self.graph_fn)
-
+        # Store node mapping and graph structure during database initialization to avoid re-consuming generator
+        node_mapping = {}
+        graph_data = []
+        
         with self.lock:
-            # Initialize database with the fixed graph
+            # Initialize database with the graph protocol
             if not self.com.exists():
-                self.db.create_from_graph(iter(graph_data), self.hash_fn)
+                # Consume the generator once and store all data
+                for node, predecessors in self.graph_fn:
+                    task_id = self.hash_fn(node)
+                    node_mapping[task_id] = node
+                    graph_data.append((node, predecessors))
+                
+                # Create a new generator for database creation that uses our stored data
+                def stored_graph():
+                    for node, predecessors in graph_data:
+                        yield (node, predecessors)
+                
+                self.db.create_from_graph(stored_graph(), self.hash_fn)
+            else:
+                # For update case, consume generator and store nodes
+                for node, predecessors in self.graph_fn:
+                    task_id = self.hash_fn(node)
+                    node_mapping[task_id] = node
+                    graph_data.append((node, predecessors))
+                
+                def stored_graph():
+                    for node, predecessors in graph_data:
+                        yield (node, predecessors)
+                
+                self.db.update_from_graph(stored_graph(), self.hash_fn)
 
-            # Update database with the graph (no dynamic changes expected)
-            self.db.update_from_graph(iter(graph_data), self.hash_fn)
-
-        # Get initial task count for progress bar (must be inside lock after DB creation)
+        # Get initial task count for progress bar
+        # Check if the protocol supports __len__ for efficient counting
         with self.lock:
-            total_tasks = len(self.db)
+            try:
+                total_tasks = len(self.graph_fn)
+            except TypeError:
+                # Protocol doesn't support __len__, use database count or node_mapping count
+                total_tasks = len(node_mapping) if node_mapping else len(self.db)
 
         tbar = tqdm(total=total_tasks, **self.tqdm_kwargs)
 
@@ -261,12 +274,43 @@ class Graphband(t.Generic[_T]):
                         "Stopping due to failure_policy='stop'."
                     )
 
-                try:
-                    ready_task_iter = self.db.get_ready_task(
-                        iter(graph_data), self.hash_fn
-                    )
-                    task_id = next(ready_task_iter)
-                except StopIteration:
+                # Get ready task using dependency-aware logic with stored graph data
+                task_id = None
+                
+                # Get all completed tasks
+                completed_task_ids = set(self.db.list_state("completed"))
+                
+                # Find a ready task from our stored graph data
+                for node, predecessors in graph_data:
+                    candidate_task_id = self.hash_fn(node)
+                    predecessor_task_ids = {self.hash_fn(pred) for pred in predecessors}
+                    
+                    # Check if this task is ready (no predecessors or all predecessors completed)
+                    if not predecessors or predecessor_task_ids.issubset(completed_task_ids):
+                        # Try to claim this task
+                        with self.db.connect() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute(
+                                """
+                                UPDATE progress_table
+                                SET state = 'running', worker = ?, count = count + 1
+                                WHERE task_id = ? AND
+                                (
+                                    state = 'pending'
+                                    OR
+                                    (state = 'died' AND count - 1 < ?)
+                                )
+                                RETURNING task_id
+                                """,
+                                (self.db.worker, candidate_task_id, self.db.max_died_retries),
+                            )
+                            row = cursor.fetchone()
+                            if row:
+                                conn.commit()
+                                task_id = row[0]
+                                break
+                
+                if task_id is None:
                     # No more ready tasks
                     break
 
@@ -274,14 +318,8 @@ class Graphband(t.Generic[_T]):
             tbar.n = len(completed)
             tbar.refresh()
 
-            # Find the actual task object corresponding to this task_id
-            # Search through the cached graph data
-            task_item = None
-            for node, _ in graph_data:
-                if self.hash_fn(node) == task_id:
-                    task_item = node
-                    break
-
+            # Get the actual task object from our stored mapping
+            task_item = node_mapping.get(task_id)
             if task_item is None:
                 # This shouldn't happen, but handle gracefully
                 with self.lock:
