@@ -27,8 +27,6 @@ def _check_disabled(func: t.Callable) -> t.Callable:
 
 def _default_hash_fn(item: t.Any) -> str:
     """Default hash function for tasks (deterministic across processes)."""
-    # Always use string representation for deterministic hashing across processes
-    # Python's built-in hash() is randomized and will differ between processes
     return hashlib.sha256(str(item).encode()).hexdigest()
 
 
@@ -59,7 +57,10 @@ class Graphband(t.Generic[_T]):
             For non-hashable data items, create a mapping between hashable UUIDs and
             the actual data, storing the data in node attributes:
 
-            Example for non-hashable items:
+            Example for non-hashable items
+
+            .. code-block:: python
+
                 import uuid
                 item_mapping = {str(uuid.uuid4()): item for item in non_hashable_items}
 
@@ -213,12 +214,7 @@ class Graphband(t.Generic[_T]):
     def __iter__(self) -> Generator[_T, None, None]:
         """The generator that handles the iteration logic."""
         if self.disabled:
-            # If Graphband is disabled, yield from a topological sort
-            # but still create the database for consistency
             graph = self.graph_fn()
-            if not self.com.exists():
-                self.db.create_from_graph(graph, self.hash_fn)
-
             nodes = list(nx.topological_sort(graph))
             yield from tqdm(nodes, **self.tqdm_kwargs)
             return

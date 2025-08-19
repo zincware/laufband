@@ -728,10 +728,11 @@ wheels = [
 
 [[package]]
 name = "laufband"
-version = "0.1.6"
+version = "0.1.7"
 source = { editable = "." }
 dependencies = [
     { name = "flufl-lock" },
+    { name = "networkx" },
     { name = "rich" },
     { name = "tqdm" },
 ]
@@ -754,6 +755,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "flufl-lock", specifier = ">=8.1.0" },
+    { name = "networkx", specifier = ">=3.4.2" },
     { name = "rich", specifier = ">=14.0.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
 ]

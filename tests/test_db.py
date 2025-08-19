@@ -4,16 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from laufband.db import LaufbandDB  # Assuming your class is in laufband/db.py
+from laufband.db import GraphbandDB  # Assuming your class is in laufband/db.py
 
 
 # Use a function to create a fresh ProgressTracker instance for each test
 @pytest.fixture
-def tracker(tmp_path: Path) -> LaufbandDB:
-    return LaufbandDB(tmp_path / "test_progress.db")
+def tracker(tmp_path: Path) -> GraphbandDB:
+    return GraphbandDB(tmp_path / "test_progress.db")
 
 
-def test_create_table(tracker: LaufbandDB):
+def test_create_table(tracker: GraphbandDB):
     tracker.create(10)
     assert tracker.db_path.exists()
     assert tracker.list_state("pending") == [str(x) for x in range(10)]
@@ -23,12 +23,12 @@ def test_create_table(tracker: LaufbandDB):
         tracker.create(10)
 
 
-def test_len(tracker: LaufbandDB):
+def test_len(tracker: GraphbandDB):
     tracker.create(10)
     assert len(tracker) == 10
 
 
-def test_next(tracker: LaufbandDB):
+def test_next(tracker: GraphbandDB):
     tracker.create(10)
 
     data = list(tracker)
@@ -36,7 +36,7 @@ def test_next(tracker: LaufbandDB):
     assert data == [str(x) for x in range(10)]
 
 
-def test_set_completed(tracker: LaufbandDB):
+def test_set_completed(tracker: GraphbandDB):
     tracker.create(10)
 
     for job in tracker:
@@ -48,7 +48,7 @@ def test_set_completed(tracker: LaufbandDB):
     assert tracker.list_state("pending") == []
 
 
-def test_set_failed(tracker: LaufbandDB):
+def test_set_failed(tracker: GraphbandDB):
     tracker.create(10)
 
     for job in tracker:
@@ -60,7 +60,7 @@ def test_set_failed(tracker: LaufbandDB):
     assert tracker.list_state("pending") == []
 
 
-def test_get_worker(tracker: LaufbandDB):
+def test_get_worker(tracker: GraphbandDB):
     tracker.create(10)
     tracker.set_worker("worker_1")
 
@@ -82,8 +82,8 @@ def test_get_worker(tracker: LaufbandDB):
 
 
 def test_duplicate_worker_identifier(tmp_path: Path):
-    a = LaufbandDB(tmp_path / "test.db", worker="worker")
-    b = LaufbandDB(tmp_path / "test.db", worker="worker")
+    a = GraphbandDB(tmp_path / "test.db", worker="worker")
+    b = GraphbandDB(tmp_path / "test.db", worker="worker")
 
     a.create(5)
 
@@ -99,7 +99,7 @@ def test_duplicate_worker_identifier(tmp_path: Path):
 def test_retry_killed(tmp_path: Path, max_died_retries: int):
     """Test if laufband can handle killed jobs."""
     com = tmp_path / "laufband.sqlite"
-    db = LaufbandDB(com, max_died_retries=max_died_retries)
+    db = GraphbandDB(com, max_died_retries=max_died_retries)
     db.create(5)
 
     assert list(db) == [str(x) for x in range(5)]
@@ -114,7 +114,7 @@ def test_retry_killed(tmp_path: Path, max_died_retries: int):
 def test_heartbeat_timeout(tmp_path: Path):
     """Test if laufband can handle killed jobs."""
     com = tmp_path / "laufband.sqlite"
-    db_1 = LaufbandDB(com, heartbeat_timeout=0.1, worker="1")
+    db_1 = GraphbandDB(com, heartbeat_timeout=0.1, worker="1")
     db_1.create(2)
 
     assert list(db_1) == ["0", "1"]
@@ -122,12 +122,12 @@ def test_heartbeat_timeout(tmp_path: Path):
 
     time.sleep(2)
 
-    db_2 = LaufbandDB(com, worker="2", heartbeat_timeout=1)
+    db_2 = GraphbandDB(com, worker="2", heartbeat_timeout=1)
     assert list(db_2) == []  # update the worker state
     assert db_2.list_state("running") == []
     assert db_2.list_state("died") == ["0", "1"]
 
-    db_3 = LaufbandDB(com, worker="3", heartbeat_timeout=1, max_died_retries=1)
+    db_3 = GraphbandDB(com, worker="3", heartbeat_timeout=1, max_died_retries=1)
 
     assert list(db_3) == ["0", "1"]  # update the worker state from 'died' to 'running'
     assert db_3.list_state("running") == ["0", "1"]
@@ -136,10 +136,10 @@ def test_heartbeat_timeout(tmp_path: Path):
 
 def test_db_identifier_none(tmp_path: Path):
     with pytest.raises(ValueError):
-        LaufbandDB(tmp_path / "test.db", worker=None)
+        GraphbandDB(tmp_path / "test.db", worker=None)
 
 
-def test_get_job_stats(tracker: LaufbandDB):
+def test_get_job_stats(tracker: GraphbandDB):
     """Test get_job_stats returns correct counts for each state."""
     tracker.create(10)
 
@@ -168,7 +168,7 @@ def test_get_job_stats(tracker: LaufbandDB):
     assert stats["died"] == 0
 
 
-def test_get_worker_info_single_worker(tracker: LaufbandDB):
+def test_get_worker_info_single_worker(tracker: GraphbandDB):
     """Test get_worker_info with a single worker."""
     tracker.create(5)
     tracker.worker = "test_worker"
@@ -213,7 +213,7 @@ def test_get_worker_info_multiple_workers(tmp_path: Path):
     db_path = tmp_path / "test_multi_worker.db"
 
     # Worker 1 processes first batch
-    worker1 = LaufbandDB(db_path, worker="worker_1")
+    worker1 = GraphbandDB(db_path, worker="worker_1")
     worker1.create(10)
 
     # Process only 3 jobs with worker1
@@ -225,7 +225,7 @@ def test_get_worker_info_multiple_workers(tmp_path: Path):
         worker1.finalize(job, "completed")
 
     # Worker 2 processes next batch
-    worker2 = LaufbandDB(db_path, worker="worker_2")
+    worker2 = GraphbandDB(db_path, worker="worker_2")
 
     # Process 2 jobs with worker2
     jobs2 = []
@@ -263,7 +263,7 @@ def test_get_worker_info_multiple_workers(tmp_path: Path):
 def test_get_worker_info_with_retries(tmp_path: Path):
     """Test get_worker_info tracks max retries correctly."""
     db_path = tmp_path / "test_retries.db"
-    worker = LaufbandDB(db_path, worker="retry_worker", max_died_retries=2)
+    worker = GraphbandDB(db_path, worker="retry_worker", max_died_retries=2)
     worker.create(3)
 
     _ = list(worker)

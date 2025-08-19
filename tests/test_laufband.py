@@ -9,7 +9,7 @@ import pytest
 from flufl.lock import Lock
 
 from laufband import Laufband
-from laufband.db import LaufbandDB
+from laufband.db import GraphbandDB
 
 
 def test_iter_default(tmp_path):
@@ -35,7 +35,7 @@ def test_iter_default(tmp_path):
 def test_iter(tmp_path):
     lock = Lock("ptqdm.lock")
     data = list(range(100))
-    db = LaufbandDB(tmp_path / "laufband.sqlite")
+    db = GraphbandDB(tmp_path / "laufband.sqlite")
 
     output = tmp_path / "data.json"
     output.write_text(json.dumps({"data": []}))
@@ -113,7 +113,7 @@ def test_resume_progress(tmp_path):
     lock = Lock("ptqdm.lock")
     data = list(range(10))
     db_path = tmp_path / "laufband.sqlite"
-    db = LaufbandDB(db_path)
+    db = GraphbandDB(db_path)
 
     output = tmp_path / "data.json"
     output.write_text(json.dumps({"data": []}))
@@ -153,7 +153,7 @@ def test_resume_progress(tmp_path):
 def test_failed(tmp_path):
     """Test if laufband can handle failed jobs."""
     com = tmp_path / "laufband.sqlite"
-    db = LaufbandDB(com)
+    db = GraphbandDB(com)
 
     with pytest.raises(ValueError):
         data = list(range(100))
@@ -172,7 +172,7 @@ def test_failed(tmp_path):
 def test_failed_via_break(tmp_path):
     """Test if laufband can handle failed jobs."""
     com = tmp_path / "laufband.sqlite"
-    db = LaufbandDB(com)
+    db = GraphbandDB(com)
 
     data = list(range(100))
     pbar = Laufband(data, com=com)
@@ -195,7 +195,7 @@ def test_failed_via_break(tmp_path):
 
 def test_dynamic_db_expansion(tmp_path):
     """Test if laufband can handle dynamic database expansion with unknown lengths."""
-    db = LaufbandDB(tmp_path / "laufband1.sqlite")
+    db = GraphbandDB(tmp_path / "laufband1.sqlite")
 
     # First run with 10 items
     results1 = []
@@ -219,7 +219,7 @@ def test_identifier(tmp_path):
     lock = Lock("ptqdm.lock")
     data = list(range(100))
     com = tmp_path / "laufband.sqlite"
-    db = LaufbandDB(com)
+    db = GraphbandDB(com)
 
     pbar = Laufband(data, lock=lock, com=com, identifier="worker_1")
 
@@ -323,7 +323,7 @@ def test_disable(tmp_path):
     #  to the default behavior of Laufband
     assert list(pbar) == data
 
-    assert pbar.com.exists()
+    assert not pbar.com.exists()
 
     with pytest.raises(RuntimeError):
         pbar.pending

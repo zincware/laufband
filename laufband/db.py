@@ -314,11 +314,6 @@ class GraphbandDB:
             rows = cursor.fetchall()
         return [row[0] for row in rows]
 
-    def list_state_int(self, state: T_STATE) -> list[int]:
-        """Backwards compatibility method that returns integer indices."""
-        task_ids = self.list_state(state)
-        return [int(task_id) for task_id in task_ids if task_id.isdigit()]
-
     def get_worker(self, task_id: str) -> Optional[str]:
         with self.connect() as conn:
             cursor = conn.cursor()
@@ -404,7 +399,3 @@ class GraphbandDB:
                 )
 
         return workers
-
-
-# Backward compatibility alias
-LaufbandDB = GraphbandDB

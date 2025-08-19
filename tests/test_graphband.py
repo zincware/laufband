@@ -2,6 +2,7 @@ import multiprocessing as mp
 import random
 import time
 from pathlib import Path
+import uuid
 
 import networkx as nx
 
@@ -263,7 +264,6 @@ def test_graphband_large_dag_performance():
 
 def test_graphband_non_hashable_items(tmp_path):
     """Test Graphband with non-hashable items using UUID mapping as per requirements."""
-    import uuid
 
     # Create non-hashable items (dictionaries)
     task_data = [
