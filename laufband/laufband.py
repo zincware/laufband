@@ -106,21 +106,24 @@ class Laufband(t.Generic[_T]):
         self._item_mapping = {}
         self._mapping_created = False
 
-        # Create a graph_fn that returns a graph with disconnected nodes (no edges)
-        def graph_fn():
-            # Lazy evaluation - create mapping only when graph is requested
-            if not self._mapping_created:
-                for item in self._data_source:
-                    item_uuid = str(uuid.uuid4())
-                    self._item_mapping[item_uuid] = item
-                self._mapping_created = True
+        # Create a graph_fn that implements GraphTraversalProtocol with lazy evaluation
+        class LazyGraphProtocol:
+            def __init__(self, parent):
+                self.parent = parent
+            
+            def __iter__(self):
+                # Lazy evaluation - create mapping only when iteration is requested
+                if not self.parent._mapping_created:
+                    for item in self.parent._data_source:
+                        item_uuid = str(uuid.uuid4())
+                        self.parent._item_mapping[item_uuid] = item
+                    self.parent._mapping_created = True
 
-            G = nx.DiGraph()
-            for item_uuid in self._item_mapping.keys():
-                G.add_node(item_uuid)
-                # Store the actual item as node data for access
-                G.nodes[item_uuid]["value"] = self._item_mapping[item_uuid]
-            return G
+                # Yield nodes with no predecessors (disconnected graph)
+                for item_uuid in self.parent._item_mapping.keys():
+                    yield (item_uuid, set())
+        
+        graph_fn = LazyGraphProtocol(self)
 
         # Use default Laufband hash function if none provided
         if hash_fn is None:

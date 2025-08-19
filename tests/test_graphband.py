@@ -19,13 +19,14 @@ def simple_graph():
             ("C", "D"),  # C → D
         ]
     )
-    return G
+    for node in nx.topological_sort(G):
+        yield (node, set(G.predecessors(node)))
 
 
 def test_graphband_sequential(tmp_path):
     """Tasks should follow dependency order in a static DAG."""
     db_path = tmp_path / "graph.sqlite"
-    pbar = Graphband(graph_fn=simple_graph, com=db_path, cleanup=False)
+    pbar = Graphband(graph_fn=simple_graph(), com=db_path, cleanup=False)
 
     results = []
     for node in pbar:
@@ -49,12 +50,13 @@ def test_graphband_custom_hash_fn(tmp_path):
     def graph_fn():
         G = nx.DiGraph()
         G.add_edges_from([(1, 2), (2, 3)])
-        return G
+        for node in nx.topological_sort(G):
+            yield (node, set(G.predecessors(node)))
 
     db_path = tmp_path / "graph.sqlite"
     hash_fn = lambda x: f"task-{x}"
 
-    pbar = Graphband(graph_fn=graph_fn, com=db_path, hash_fn=hash_fn, cleanup=False)
+    pbar = Graphband(graph_fn=graph_fn(), com=db_path, hash_fn=hash_fn, cleanup=False)
     results = list(pbar)
 
     # Check using the Graphband instance
@@ -67,11 +69,12 @@ def test_graphband_double_worker(tmp_path):
     def graph_fn():
         G = nx.DiGraph()
         G.add_edges_from([(1, 2), (2, 4), (1, 3), (2, 5)])
-        return G
+        for node in nx.topological_sort(G):
+            yield (node, set(G.predecessors(node)))
 
     db_path = tmp_path / "graph.sqlite"
-    pbar1 = Graphband(graph_fn=graph_fn, com=db_path)
-    pbar2 = Graphband(graph_fn=graph_fn, com=db_path)
+    pbar1 = Graphband(graph_fn=graph_fn(), com=db_path)
+    pbar2 = Graphband(graph_fn=graph_fn(), com=db_path)
 
     pbar1_iter = iter(pbar1)
     pbar2_iter = iter(pbar2)
@@ -84,43 +87,6 @@ def test_graphband_double_worker(tmp_path):
     assert x2 in {2, 3}
     assert x3 in {2, 3}
 
-
-def test_graphband_dynamic_graph_updates(tmp_path):
-    """Test that graph state is re-evaluated before processing each task."""
-    tasks_to_add = []
-
-    def dynamic_graph_fn():
-        G = nx.DiGraph()
-        G.add_edges_from([("A", "B"), ("A", "C")])
-        # Add dynamic tasks if they exist
-        for task in tasks_to_add:
-            G.add_node(task)
-            G.add_edge("A", task)
-        return G
-
-    db_path = tmp_path / "graph.sqlite"
-    pbar = Graphband(graph_fn=dynamic_graph_fn, com=db_path, cleanup=False)
-
-    results = []
-    pbar_iter = iter(pbar)
-
-    # Get first task (should be A)
-    task1 = next(pbar_iter)
-    results.append(task1)
-    assert task1 == "A"
-
-    # Add new task dynamically
-    tasks_to_add.append("D")
-
-    # Get remaining tasks - should include the dynamically added task
-    remaining = list(pbar_iter)
-    results.extend(remaining)
-
-    # Should have processed all tasks including dynamically added one
-    assert set(results) == {"A", "B", "C", "D"}
-    assert results.index("A") < results.index("B")
-    assert results.index("A") < results.index("C")
-    assert results.index("A") < results.index("D")
 
 
 def test_graphband_generator_input():
@@ -135,9 +101,10 @@ def test_graphband_generator_input():
         # Add nodes from generator
         for task in task_generator():
             G.add_node(task)
-        return G
+        for node in nx.topological_sort(G):
+            yield (node, set(G.predecessors(node)))
 
-    pbar = Graphband(graph_fn=graph_from_generator, cleanup=True)
+    pbar = Graphband(graph_fn=graph_from_generator(), cleanup=True)
     results = list(pbar)
 
     expected = [f"task-{i}" for i in range(5)]
@@ -150,7 +117,8 @@ def test_graphband_task_identity_determinism(tmp_path):
     def graph_fn():
         G = nx.DiGraph()
         G.add_nodes_from([1, 2, 3])
-        return G
+        for node in nx.topological_sort(G):
+            yield (node, set(G.predecessors(node)))
 
     # Custom hash function to ensure determinism
     def deterministic_hash(item):
@@ -159,8 +127,8 @@ def test_graphband_task_identity_determinism(tmp_path):
     db_path = tmp_path / "graph.sqlite"
 
     # Create two workers with same graph and hash function
-    worker1 = Graphband(graph_fn=graph_fn, hash_fn=deterministic_hash, com=db_path)
-    worker2 = Graphband(graph_fn=graph_fn, hash_fn=deterministic_hash, com=db_path)
+    worker1 = Graphband(graph_fn=graph_fn(), hash_fn=deterministic_hash, com=db_path)
+    worker2 = Graphband(graph_fn=graph_fn(), hash_fn=deterministic_hash, com=db_path)
 
     # Both should see the same task IDs
     w1_results = list(worker1)
@@ -188,10 +156,11 @@ def test_graphband_termination_conditions(tmp_path):
         # Always provide the same tasks - termination will happen when they're all complete
         G.add_nodes_from([f"task-{i}" for i in range(1, 4)])  # task-1, task-2, task-3
 
-        return G
+        for node in nx.topological_sort(G):
+            yield (node, set(G.predecessors(node)))
 
     db_path = tmp_path / "graph.sqlite"
-    pbar = Graphband(graph_fn=limited_graph_fn, com=db_path, cleanup=False)
+    pbar = Graphband(graph_fn=limited_graph_fn(), com=db_path, cleanup=False)
 
     results = list(pbar)
 
@@ -204,42 +173,6 @@ def test_graphband_termination_conditions(tmp_path):
     assert len(completed_tasks) == 3
 
 
-def test_graphband_runtime_dependency_injection(tmp_path):
-    """Test injecting new dependencies at runtime."""
-    dependencies = []
-
-    def dynamic_deps_graph():
-        G = nx.DiGraph()
-        G.add_nodes_from(["A", "B", "C"])
-
-        # Add dynamic dependencies
-        for src, dst in dependencies:
-            G.add_edge(src, dst)
-
-        return G
-
-    db_path = tmp_path / "graph.sqlite"
-    pbar = Graphband(graph_fn=dynamic_deps_graph, com=db_path, cleanup=False)
-
-    results = []
-    pbar_iter = iter(pbar)
-
-    # Initially all tasks are independent
-    task1 = next(pbar_iter)
-    results.append(task1)
-
-    # Inject dependency: B depends on A
-    dependencies.append(("A", "B"))
-
-    # Continue processing
-    remaining = list(pbar_iter)
-    results.extend(remaining)
-
-    # Should respect the runtime-injected dependency
-    assert set(results) == {"A", "B", "C"}
-    if "A" in results and "B" in results:
-        # If both A and B were processed, A should come before B
-        assert results.index("A") < results.index("B")
 
 
 def test_graphband_large_dag_performance():
@@ -252,9 +185,10 @@ def test_graphband_large_dag_performance():
             G.add_node(i)
             if i > 0:
                 G.add_edge(i - 1, i)
-        return G
+        for node in nx.topological_sort(G):
+            yield (node, set(G.predecessors(node)))
 
-    pbar = Graphband(graph_fn=large_graph, cleanup=True)
+    pbar = Graphband(graph_fn=large_graph(), cleanup=True)
     results = list(pbar)
 
     # Should process all tasks in dependency order
@@ -296,7 +230,8 @@ def test_graphband_non_hashable_items(tmp_path):
                 dep_uuid = name_to_uuid[dep_name]
                 G.add_edge(dep_uuid, task_uuid)
 
-        return G
+        for node in nx.topological_sort(G):
+            yield (node, set(G.predecessors(node)))
 
     # Custom hash function using task name from UUID mapping
     def task_hash(task_uuid):
@@ -305,7 +240,7 @@ def test_graphband_non_hashable_items(tmp_path):
 
     db_path = tmp_path / "graph.sqlite"
     pbar = Graphband(
-        graph_fn=graph_with_uuid_mapping, hash_fn=task_hash, com=db_path, cleanup=False
+        graph_fn=graph_with_uuid_mapping(), hash_fn=task_hash, com=db_path, cleanup=False
     )
 
     results = list(pbar)
@@ -342,9 +277,13 @@ def worker_process(worker_id: int, db_path: Path, results_queue: mp.Queue):
 
     processed_nodes = []
 
+    def graph_generator():
+        for node in nx.topological_sort(digraph):
+            yield (node, set(digraph.predecessors(node)))
+
     try:
         pbar = Graphband(
-            graph_fn=lambda: digraph,
+            graph_fn=graph_generator(),
             com=db_path,
             identifier=f"worker_{worker_id}",
             cleanup=False,

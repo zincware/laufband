@@ -156,7 +156,7 @@ class GraphbandDB:
                 raise StopIteration
 
     def get_ready_task(
-        self, graph: nx.DiGraph, hash_fn: t.Callable[[t.Any], str]
+        self, graph, hash_fn: t.Callable[[t.Any], str]
     ) -> Iterator[str]:
         """Get next ready task that has all dependencies completed."""
         with self.connect() as conn:
@@ -168,39 +168,66 @@ class GraphbandDB:
             )
             completed_task_ids = {row[0] for row in cursor.fetchall()}
 
-            # Find tasks with all dependencies completed
-            for node in graph.nodes():
-                task_id = hash_fn(node)
-
-                # Check if this task is ready (all predecessors completed)
-                predecessors = set(graph.predecessors(node))
-                predecessor_task_ids = {hash_fn(pred) for pred in predecessors}
-
-                if not predecessors or predecessor_task_ids.issubset(
-                    completed_task_ids
-                ):
-                    # Try to claim this task
-                    cursor.execute(
-                        """
-                        UPDATE progress_table
-                        SET state = 'running', worker = ?, count = count + 1
-                        WHERE task_id = ? AND
-                        (
-                            state = 'pending'
-                            OR
-                            (state = 'died' AND count - 1 < ?)
+            # Handle both NetworkX DiGraph and GraphTraversalProtocol
+            if hasattr(graph, 'nodes'):
+                # NetworkX DiGraph
+                for node in graph.nodes():
+                    task_id = hash_fn(node)
+                    predecessors = set(graph.predecessors(node))
+                    predecessor_task_ids = {hash_fn(pred) for pred in predecessors}
+                    
+                    if not predecessors or predecessor_task_ids.issubset(
+                        completed_task_ids
+                    ):
+                        # Try to claim this task
+                        cursor.execute(
+                            """
+                            UPDATE progress_table
+                            SET state = 'running', worker = ?, count = count + 1
+                            WHERE task_id = ? AND
+                            (
+                                state = 'pending'
+                                OR
+                                (state = 'died' AND count - 1 < ?)
+                            )
+                            RETURNING task_id
+                            """,
+                            (self.worker, task_id, self.max_died_retries),
                         )
-                        RETURNING task_id
-                        """,
-                        (self.worker, task_id, self.max_died_retries),
-                    )
-                    row = cursor.fetchone()
-                    if row:
-                        self.update_worker(cursor)
-                        self.mark_died(cursor)
-                        conn.commit()
-                        yield row[0]
-                        return
+                        row = cursor.fetchone()
+                        if row:
+                            conn.commit()
+                            yield row[0]
+                            return
+            else:
+                # GraphTraversalProtocol
+                for node, predecessors in graph:
+                    task_id = hash_fn(node)
+                    predecessor_task_ids = {hash_fn(pred) for pred in predecessors}
+
+                    if not predecessors or predecessor_task_ids.issubset(
+                        completed_task_ids
+                    ):
+                        # Try to claim this task
+                        cursor.execute(
+                            """
+                            UPDATE progress_table
+                            SET state = 'running', worker = ?, count = count + 1
+                            WHERE task_id = ? AND
+                            (
+                                state = 'pending'
+                                OR
+                                (state = 'died' AND count - 1 < ?)
+                            )
+                            RETURNING task_id
+                            """,
+                            (self.worker, task_id, self.max_died_retries),
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            conn.commit()
+                            yield row[0]
+                            return
 
             self.update_worker(cursor)
             self.mark_died(cursor)
@@ -223,8 +250,8 @@ class GraphbandDB:
             graph.add_node(i)
         self.create_from_graph(graph, str)
 
-    def create_from_graph(self, graph: nx.DiGraph, hash_fn: t.Callable[[t.Any], str]):
-        """Create database from a networkx graph."""
+    def create_from_graph(self, graph, hash_fn: t.Callable[[t.Any], str]):
+        """Create database from a networkx graph or GraphTraversalProtocol."""
         with self.connect() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -235,15 +262,31 @@ class GraphbandDB:
                     count INTEGER DEFAULT 0
                 )
             """)
-            for node in graph.nodes():
-                task_id = hash_fn(node)
-                cursor.execute(
-                    """
-                    INSERT OR IGNORE INTO progress_table (task_id, state, worker)
-                    VALUES (?, ?, ?)
-                    """,
-                    (task_id, "pending", None),
-                )
+            
+            # Handle both NetworkX DiGraph and GraphTraversalProtocol
+            if hasattr(graph, 'nodes'):
+                # NetworkX DiGraph
+                for node in graph.nodes():
+                    task_id = hash_fn(node)
+                    cursor.execute(
+                        """
+                        INSERT OR IGNORE INTO progress_table (task_id, state, worker)
+                        VALUES (?, ?, ?)
+                        """,
+                        (task_id, "pending", None),
+                    )
+            else:
+                # GraphTraversalProtocol
+                for node, _ in graph:
+                    task_id = hash_fn(node)
+                    cursor.execute(
+                        """
+                        INSERT OR IGNORE INTO progress_table (task_id, state, worker)
+                        VALUES (?, ?, ?)
+                        """,
+                        (task_id, "pending", None),
+                    )
+            
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS worker_table (
                     worker TEXT PRIMARY KEY,
@@ -252,8 +295,8 @@ class GraphbandDB:
             """)
             conn.commit()
 
-    def update_from_graph(self, graph: nx.DiGraph, hash_fn: t.Callable[[t.Any], str]):
-        """Update database with new tasks from graph."""
+    def update_from_graph(self, graph, hash_fn: t.Callable[[t.Any], str]):
+        """Update database with new tasks from graph or GraphTraversalProtocol."""
         with self.connect() as conn:
             cursor = conn.cursor()
             # Check if progress_table exists, create if it doesn't
@@ -277,15 +320,29 @@ class GraphbandDB:
                     )
                 """)
 
-            for node in graph.nodes():
-                task_id = hash_fn(node)
-                cursor.execute(
-                    """
-                    INSERT OR IGNORE INTO progress_table (task_id, state, worker)
-                    VALUES (?, ?, ?)
-                    """,
-                    (task_id, "pending", None),
-                )
+            # Handle both NetworkX DiGraph and GraphTraversalProtocol
+            if hasattr(graph, 'nodes'):
+                # NetworkX DiGraph
+                for node in graph.nodes():
+                    task_id = hash_fn(node)
+                    cursor.execute(
+                        """
+                        INSERT OR IGNORE INTO progress_table (task_id, state, worker)
+                        VALUES (?, ?, ?)
+                        """,
+                        (task_id, "pending", None),
+                    )
+            else:
+                # GraphTraversalProtocol
+                for node, _ in graph:
+                    task_id = hash_fn(node)
+                    cursor.execute(
+                        """
+                        INSERT OR IGNORE INTO progress_table (task_id, state, worker)
+                        VALUES (?, ?, ?)
+                        """,
+                        (task_id, "pending", None),
+                    )
             conn.commit()
 
     def finalize(self, task_id: str, state: T_STATE = "completed"):

@@ -31,3 +31,21 @@ TODO:
 - test features above manually
 - test `laufband watch`
 - test dependencies! The DB does not seem to contain them yet?
+
+Object with known length N
+- can construct graph with N nodes and no edges
+- task_id is just the index
+
+Fixed Graph:
+- can return the graph
+- task_id is just the index, assuming iteration over the graph is deterministic
+
+Generator, e.g. ase.io.iread
+- can yield (atoms, set()) without consuming the generator directly
+- task_id is just the index
+
+Dynamic Graph:
+- multiple issues:
+    - dependencies could be injected
+    - we need to iterate the entire graph each time
+    - no real application at this point?

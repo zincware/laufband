@@ -1,17 +1,34 @@
 import hashlib
 import os
 import typing as t
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import nullcontext
 from pathlib import Path
 
-import networkx as nx
 from flufl.lock import Lock
 from tqdm import tqdm
 
 from laufband.db import GraphbandDB
 
 _T = t.TypeVar("_T", covariant=True)
+
+class GraphTraversalProtocol(t.Protocol):
+    """Protocol for iterating over a graph's nodes and their predecessors.
+
+    Yields
+    -------
+    Iterator[tuple[str, set[str]]]
+        An iterator over the graph's nodes and their predecessors.
+
+    Example
+    -------
+    >>> g = nx.DiGraph()
+    >>> g.add_edges_from([("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")])
+    >>> for node in nx.topological_sort(g):
+    ...     yield (node, set(g.predecessors(node)))
+    """
+
+    def __iter__(self) -> Iterator[tuple[str, set[str]]]: ...
 
 
 def _check_disabled(func: t.Callable) -> t.Callable:
@@ -33,7 +50,7 @@ def _default_hash_fn(item: t.Any) -> str:
 class Graphband(t.Generic[_T]):
     def __init__(
         self,
-        graph_fn: Callable[[], nx.DiGraph],
+        graph_fn: GraphTraversalProtocol,
         *,
         hash_fn: Callable[[_T], str] | None = None,
         lock: Lock | None = None,
@@ -51,25 +68,10 @@ class Graphband(t.Generic[_T]):
 
         Arguments
         ---------
-        graph_fn : Callable[[], networkx.DiGraph]
-            Function that returns the current graph state. Nodes are tasks,
-            edges are dependencies. All nodes must be hashable (can be used as dict keys).
-            For non-hashable data items, create a mapping between hashable UUIDs and
-            the actual data, storing the data in node attributes:
-
-            Example for non-hashable items
-
-            .. code-block:: python
-
-                import uuid
-                item_mapping = {str(uuid.uuid4()): item for item in non_hashable_items}
-
-                def graph_fn():
-                    G = nx.DiGraph()
-                    for uuid, item in item_mapping.items():
-                        G.add_node(uuid)
-                        G.nodes[uuid]['value'] = item
-                    return G
+        graph_fn : GraphTraversalProtocol
+            Object that implements the GraphTraversalProtocol, yielding tuples of 
+            (node, predecessors) for graph traversal. Nodes are tasks and must be 
+            hashable.
 
         hash_fn : Callable[[Any], str] | None
             Function to compute task IDs from graph nodes. If None, uses a default
@@ -214,18 +216,33 @@ class Graphband(t.Generic[_T]):
     def __iter__(self) -> Generator[_T, None, None]:
         """The generator that handles the iteration logic."""
         if self.disabled:
-            graph = self.graph_fn()
-            nodes = list(nx.topological_sort(graph))
-            yield from tqdm(nodes, **self.tqdm_kwargs)
+            # For disabled mode, consume the graph once and iterate
+            if callable(self.graph_fn):
+                graph_iter = self.graph_fn()
+            else:
+                graph_iter = self.graph_fn
+            yield from tqdm((node for node, _ in graph_iter), **self.tqdm_kwargs)
             return
 
+        # Handle generator vs callable logic: 
+        # - Callables return fresh generators each time (for fixed graphs)
+        # - Generators are consumed once and cached (for lazy evaluation)
+        
+        # Consume generator once and cache for reuse
+        if callable(self.graph_fn):
+            # Fixed graph via callable
+            graph_data = list(self.graph_fn())
+        else:
+            # Fixed graph via generator (lazy evaluation)
+            graph_data = list(self.graph_fn)
+        
         with self.lock:
-            # Initialize database with current graph
-            graph = self.graph_fn()
+            # Initialize database with the fixed graph
             if not self.com.exists():
-                self.db.create_from_graph(graph, self.hash_fn)
-            # Always update database with current graph to ensure all tasks are present
-            self.db.update_from_graph(graph, self.hash_fn)
+                self.db.create_from_graph(iter(graph_data), self.hash_fn)
+            
+            # Update database with the graph (no dynamic changes expected)
+            self.db.update_from_graph(iter(graph_data), self.hash_fn)
 
         # Get initial task count for progress bar (must be inside lock after DB creation)
         with self.lock:
@@ -235,12 +252,6 @@ class Graphband(t.Generic[_T]):
 
         while True:
             with self.lock:
-                # Re-evaluate graph state for dynamic updates
-                current_graph = self.graph_fn()
-
-                # Update database with any new tasks
-                self.db.update_from_graph(current_graph, self.hash_fn)
-
                 completed = self.db.list_state("completed")
 
                 if self.failure_policy == "stop" and self.db.list_state("failed"):
@@ -251,7 +262,7 @@ class Graphband(t.Generic[_T]):
 
                 try:
                     ready_task_iter = self.db.get_ready_task(
-                        current_graph, self.hash_fn
+                        iter(graph_data), self.hash_fn
                     )
                     task_id = next(ready_task_iter)
                 except StopIteration:
@@ -263,10 +274,9 @@ class Graphband(t.Generic[_T]):
             tbar.refresh()
 
             # Find the actual task object corresponding to this task_id
-            # For now, we need to reverse-lookup from the graph
-            current_graph = self.graph_fn()
+            # Search through the cached graph data
             task_item = None
-            for node in current_graph.nodes():
+            for node, _ in graph_data:
                 if self.hash_fn(node) == task_id:
                     task_item = node
                     break
