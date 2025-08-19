@@ -211,14 +211,14 @@ class GraphbandDB:
                     count INTEGER DEFAULT 0
                 )
             """)
-            
+
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS worker_table (
                     worker TEXT PRIMARY KEY,
                     last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
+
             # For sequential tasks, add all tasks to progress_table immediately
             # This maintains backward compatibility with old Laufband tests
             for i in range(size):
@@ -243,7 +243,7 @@ class GraphbandDB:
                     count INTEGER DEFAULT 0
                 )
             """)
-            
+
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS dependencies (
                     task_id TEXT,
@@ -261,7 +261,7 @@ class GraphbandDB:
                 )
             """)
             conn.commit()
-    
+
     def add_task(self, task_id: str, predecessor_ids: set[str]):
         """Add a single task with its dependencies."""
         with self.connect() as conn:
@@ -289,7 +289,7 @@ class GraphbandDB:
                     count INTEGER DEFAULT 0
                 )
             """)
-            
+
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS dependencies (
                     task_id TEXT,
@@ -301,7 +301,7 @@ class GraphbandDB:
             # Process GraphTraversalProtocol - only store dependencies
             for node, predecessors in graph:
                 task_id = hash_fn(node)
-                
+
                 # Add dependencies
                 for predecessor in predecessors:
                     predecessor_id = hash_fn(predecessor)
@@ -358,7 +358,7 @@ class GraphbandDB:
             # Process GraphTraversalProtocol - only store dependencies
             for node, predecessors in graph:
                 task_id = hash_fn(node)
-                
+
                 # Add dependencies
                 for predecessor in predecessors:
                     predecessor_id = hash_fn(predecessor)

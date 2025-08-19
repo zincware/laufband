@@ -1,5 +1,4 @@
 import typing as t
-import uuid
 from collections.abc import Generator, Iterable
 from pathlib import Path
 
@@ -8,6 +7,7 @@ from flufl.lock import Lock
 from laufband.graphband import Graphband
 
 _T = t.TypeVar("_T", covariant=True)
+
 
 class SequentialGraphProtocol:
     def __init__(self, parent):
@@ -21,6 +21,7 @@ class SequentialGraphProtocol:
             task_id = str(idx)
             self.parent._item_mapping[task_id] = item
             yield (task_id, set())
+
 
 class Laufband(t.Generic[_T]):
     def __init__(
@@ -118,6 +119,7 @@ class Laufband(t.Generic[_T]):
 
         # Use default Laufband hash function if none provided
         if hash_fn is None:
+
             def hash_fn(item: str) -> str:
                 return item
 
@@ -189,7 +191,6 @@ class Laufband(t.Generic[_T]):
         """Return the indices of items that are currently being processed."""
         task_ids = self._graphband.running
         return [int(task_id) for task_id in task_ids]
-
 
     @property
     def died(self) -> list[int]:

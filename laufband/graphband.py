@@ -200,7 +200,6 @@ class Graphband(t.Generic[_T]):
         with self.lock:
             return self.db.list_state("running")
 
-
     @property
     @_check_disabled
     def died(self) -> list[str]:
@@ -220,7 +219,7 @@ class Graphband(t.Generic[_T]):
         graph_iterator = iter(self.graph_fn)
         graph_exhausted = False
         tbar = None  # Will be initialized once we know total tasks
-        
+
         with self.lock:
             # Initialize database if it doesn't exist
             if not self.com.exists():
@@ -228,7 +227,7 @@ class Graphband(t.Generic[_T]):
 
         while True:
             task_id = None
-            
+
             with self.lock:
                 # Check for stop conditions
                 if self.failure_policy == "stop" and self.db.list_state("failed"):
@@ -239,20 +238,20 @@ class Graphband(t.Generic[_T]):
 
                 # Try to find a ready task from what we already know
                 task_id = self._find_ready_task()
-                
+
                 # If no ready task found and generator not exhausted, consume more
                 while task_id is None and not graph_exhausted:
                     try:
                         node, predecessors = next(graph_iterator)
                         candidate_task_id = self.hash_fn(node)
                         node_mapping[candidate_task_id] = node
-                        
+
                         # Add this node to database dependencies only
                         predecessor_task_ids = {
                             self.hash_fn(pred) for pred in predecessors
                         }
                         self.db.add_task(candidate_task_id, predecessor_task_ids)
-                        
+
                         # Check if this new task is ready (all dependencies satisfied)
                         completed_task_ids = set(self.db.list_state("completed"))
                         if not predecessors or predecessor_task_ids.issubset(
@@ -275,14 +274,14 @@ class Graphband(t.Generic[_T]):
                                     conn.commit()
                                     task_id = row[0]
                                     break
-                        
+
                         # If not ready, try to find another ready task
                         task_id = self._find_ready_task()
-                        
+
                     except StopIteration:
                         graph_exhausted = True
                         break
-                
+
                 # If still no task, check if we're done or need more from generator
                 if task_id is None:
                     if graph_exhausted:
@@ -306,13 +305,13 @@ class Graphband(t.Generic[_T]):
                             node, predecessors = next(graph_iterator)
                             candidate_task_id = self.hash_fn(node)
                             node_mapping[candidate_task_id] = node
-                            
+
                             # Add this node to database dependencies only
                             predecessor_task_ids = {
                                 self.hash_fn(pred) for pred in predecessors
                             }
                             self.db.add_task(candidate_task_id, predecessor_task_ids)
-                            
+
                             # Check if this new task is ready
                             completed_task_ids = set(self.db.list_state("completed"))
                             if not predecessors or predecessor_task_ids.issubset(
@@ -333,7 +332,7 @@ class Graphband(t.Generic[_T]):
                                     if row:
                                         conn.commit()
                                         task_id = row[0]
-                            
+
                             # If we found a task, continue with the main loop
                             if task_id:
                                 continue
@@ -387,7 +386,7 @@ class Graphband(t.Generic[_T]):
             with self.lock:
                 # After processing, mark as completed
                 self.db.finalize(task_id, "completed")
-                
+
                 # Check if we're done (only when graph is exhausted)
                 completed = self.db.list_state("completed")
                 total_tasks = len(self.db)
@@ -404,7 +403,7 @@ class Graphband(t.Generic[_T]):
 
         if tbar:
             tbar.close()
-    
+
     def _find_ready_task(self) -> str | None:
         """Find a ready task from existing database entries."""
         with self.db.connect() as conn:
@@ -416,7 +415,7 @@ class Graphband(t.Generic[_T]):
                 FROM progress_table pt
                 WHERE pt.state = 'died' AND pt.count - 1 < ?
                 AND NOT EXISTS (
-                    SELECT 1 FROM dependencies d 
+                    SELECT 1 FROM dependencies d
                     JOIN progress_table dep_pt ON d.predecessor_id = dep_pt.task_id
                     WHERE d.task_id = pt.task_id AND dep_pt.state != 'completed'
                 )
