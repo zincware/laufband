@@ -72,10 +72,9 @@ class Laufband(t.Generic[_T]):
         heartbeat_timeout : int
             The timeout in seconds to consider a worker as dead if it has not been seen
             in the last `heartbeat_timeout` seconds. This is used to mark jobs
-            as "died" if the worker process is killed unexpectedly. Set to a value
-            greater than what you expect the runtime of the longest iteration to be.
-            Defaults to 1 hour or the value of the environment variable
-            ``LAUFBAND_HEARTBEAT_TIMEOUT`` if set.
+            as "died" if the worker process is killed unexpectedly.
+            With the background heartbeat thread updating every 10 seconds, defaults to 30 seconds
+            or the value of the environment variable ``LAUFBAND_HEARTBEAT_TIMEOUT`` if set.
         max_died_retries : int
             The number of times to retry processing items that have been marked as died.
             If set to 0, no retries will be attempted.

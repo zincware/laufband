@@ -106,8 +106,8 @@ class Graphband(t.Generic[_T]):
             The timeout in seconds to consider a worker as dead if it has not been seen
             in the last `heartbeat_timeout` seconds. This is used to mark jobs
             as "died" if the worker process is killed unexpectedly.
-            Defaults to 1 hour or the value of the environment variable
-            ``LAUFBAND_HEARTBEAT_TIMEOUT`` if set.
+            With the background heartbeat thread updating every 10 seconds, defaults to 30 seconds
+            or the value of the environment variable ``LAUFBAND_HEARTBEAT_TIMEOUT`` if set.
         max_died_retries : int
             The number of times to retry processing items that have been marked as died.
             If set to 0, no retries will be attempted.
@@ -121,7 +121,7 @@ class Graphband(t.Generic[_T]):
             Additional arguments to pass to tqdm.
         """
         if heartbeat_timeout is None:
-            heartbeat_timeout = int(os.getenv("LAUFBAND_HEARTBEAT_TIMEOUT", 60 * 60))
+            heartbeat_timeout = int(os.getenv("LAUFBAND_HEARTBEAT_TIMEOUT", 30))
         if max_died_retries is None:
             max_died_retries = int(os.getenv("LAUFBAND_MAX_DIED_RETRIES", 0))
         if identifier is None:

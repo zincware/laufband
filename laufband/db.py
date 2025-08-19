@@ -1,6 +1,7 @@
 import contextlib
 import os
 import sqlite3
+import threading
 import typing as t
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -27,6 +28,8 @@ class GraphbandDB:
         Unique identifier for the worker, defaults to the process ID.
     heartbeat_timeout : int
         Timeout in seconds to mark jobs as 'died' if the worker has not been seen.
+        With the background heartbeat thread updating every 10 seconds, defaults to 30 seconds.
+        No longer needs to account for long iteration times.
     max_died_retries : int
         Number of retries for jobs that are marked as 'died'.
     _worker_checked : bool
@@ -35,13 +38,55 @@ class GraphbandDB:
 
     db_path: str | Path
     worker: str = field(default_factory=lambda: str(os.getpid()))
-    heartbeat_timeout: int = 60
+    heartbeat_timeout: int = 30
     max_died_retries: int = 0
     _worker_checked: bool = field(default=False, init=False)
+    _heartbeat_thread: threading.Thread | None = field(default=None, init=False)
+    _heartbeat_stop_event: threading.Event = field(
+        default_factory=threading.Event, init=False
+    )
+    _heartbeat_active: bool = field(default=False, init=False)
 
     def __post_init__(self):
         if self.worker is None:
             raise ValueError("Worker name must be set before iterating.")
+
+    def _heartbeat_loop(self):
+        """Background thread updating worker heartbeat and marking died workers."""
+        while not self._heartbeat_stop_event.wait(timeout=10.0):
+            try:
+                with self.connect() as conn:
+                    cursor = conn.cursor()
+                    self.update_worker(cursor)
+                    self.mark_died(cursor)
+                    conn.commit()
+            except Exception:
+                # Continue running even if heartbeat update fails
+                pass
+
+    def start_heartbeat(self):
+        """Start the background heartbeat thread."""
+        if not self._heartbeat_active:
+            self._heartbeat_active = True
+            self._heartbeat_stop_event.clear()
+            self._heartbeat_thread = threading.Thread(
+                target=self._heartbeat_loop,
+                daemon=True,
+                name=f"heartbeat-{self.worker}",
+            )
+            self._heartbeat_thread.start()
+
+    def stop_heartbeat(self):
+        """Stop the background heartbeat thread."""
+        if self._heartbeat_active:
+            self._heartbeat_stop_event.set()
+            if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+                self._heartbeat_thread.join(timeout=1.0)
+            self._heartbeat_active = False
+
+    def __del__(self):
+        """Ensure heartbeat thread is stopped when object is destroyed."""
+        self.stop_heartbeat()
 
     def set_metadata(self, key: str, value: t.Any):
         """Set a metadata key-value pair."""
@@ -110,6 +155,8 @@ class GraphbandDB:
                     self.mark_died(cursor)
                     conn.commit()
             self._worker_checked = True
+            # Start the background heartbeat thread
+            self.start_heartbeat()
         return self
 
     def update_worker(self, cursor: sqlite3.Cursor):
@@ -167,9 +214,6 @@ class GraphbandDB:
             )
             row = cursor.fetchone()
 
-            self.update_worker(cursor)
-            self.mark_died(cursor)
-
             conn.commit()
 
             if row:
@@ -179,6 +223,10 @@ class GraphbandDB:
 
     def get_ready_task(self, graph, hash_fn: t.Callable[[t.Any], str]) -> Iterator[str]:
         """Get next ready task that has all dependencies completed."""
+        # Ensure heartbeat thread is running
+        if not self._heartbeat_active:
+            self.start_heartbeat()
+            
         with self.connect() as conn:
             cursor = conn.cursor()
 
@@ -213,14 +261,12 @@ class GraphbandDB:
                     )
                     row = cursor.fetchone()
                     if row:
+                        # Register worker when claiming graph tasks
                         self.update_worker(cursor)
-                        self.mark_died(cursor)
                         conn.commit()
                         yield row[0]
                         return
 
-            self.update_worker(cursor)
-            self.mark_died(cursor)
             conn.commit()
             return
 
@@ -385,6 +431,10 @@ class GraphbandDB:
 
         Returns the task_id if successfully claimed, None otherwise.
         """
+        # Ensure heartbeat thread is running
+        if not self._heartbeat_active:
+            self.start_heartbeat()
+            
         with self.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -397,6 +447,7 @@ class GraphbandDB:
             )
             row = cursor.fetchone()
             if row:
+                # Register worker when claiming tasks
                 self.update_worker(cursor)
                 conn.commit()
                 return row[0]
@@ -444,7 +495,6 @@ class GraphbandDB:
             )
             row = cursor.fetchone()
             if row:
-                self.update_worker(cursor)
                 conn.commit()
                 return row[0]
             return None

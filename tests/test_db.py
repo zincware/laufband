@@ -1,3 +1,4 @@
+import multiprocessing
 import time
 from pathlib import Path
 
@@ -455,7 +456,7 @@ def test_worker_registration_on_graph_task_claim(tmp_path: Path):
     def simple_graph():
         yield ("task_node", [])  # No dependencies
 
-    def hash_fn(node):
+    def hash_fn(_):
         return "graph_task_1"  # Maps to our pending task
 
     # Use get_ready_task method
@@ -481,3 +482,115 @@ def test_worker_registration_on_graph_task_claim(tmp_path: Path):
     assert worker_info[0]["worker"] == "graph_test_worker"
     assert worker_info[0]["active_jobs"] == 1
     assert worker_info[0]["last_seen"] is not None
+
+
+def worker_process(db_path: Path, worker_id: str, ready_event: multiprocessing.Event):
+    """Worker process that claims a task and then sleeps until killed."""
+    worker = None
+    try:
+        # Create worker with a shorter heartbeat timeout for faster testing
+        worker = GraphbandDB(db_path, worker=worker_id, heartbeat_timeout=5)
+        
+        # Claim a task
+        result = worker.claim_task("test_task_multiprocess")
+        if result != "test_task_multiprocess":
+            return
+        
+        # Signal that we're ready and have claimed the task
+        ready_event.set()
+        
+        # Sleep indefinitely until killed
+        while True:
+            time.sleep(1)
+    except Exception:
+        # Worker process was killed or encountered an error
+        pass
+    finally:
+        # Clean up heartbeat thread if worker was created
+        if worker:
+            worker.stop_heartbeat()
+
+
+def test_multiprocess_worker_death_detection(tmp_path: Path):
+    """Test that a killed worker process has its jobs marked as died."""
+    db_path = tmp_path / "test_multiprocess_death.db"
+    
+    # Set up the main worker to create the database
+    main_worker = GraphbandDB(db_path, worker="main_worker", heartbeat_timeout=5)
+    main_worker.create_empty()
+    
+    # Don't add the task to the database beforehand - let claim_task create it
+    
+    # Create event for synchronization
+    ready_event = multiprocessing.Event()
+    
+    # Start worker process
+    process = multiprocessing.Process(
+        target=worker_process,
+        args=(db_path, "subprocess_worker", ready_event)
+    )
+    process.start()
+    
+    try:
+        # Wait for worker to claim the task (with timeout)
+        assert ready_event.wait(timeout=10), "Worker process didn't claim task in time"
+        
+        # Verify the task is running
+        with main_worker.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT state, worker FROM progress_table WHERE task_id = ?",
+                ("test_task_multiprocess",),
+            )
+            row = cursor.fetchone()
+            assert row is not None
+            assert row[0] == "running"
+            assert row[1] == "subprocess_worker"
+        
+        # Kill the worker process abruptly
+        process.terminate()
+        process.join(timeout=5)
+        
+        # If terminate didn't work, force kill
+        if process.is_alive():
+            process.kill()
+            process.join()
+        
+        # Wait for the background heartbeat system to detect the dead worker
+        # The heartbeat runs every 10 seconds and timeout is 5 seconds
+        # So we need to wait at least 15 seconds for detection
+        time.sleep(16)
+        
+        # Check if another worker (or the heartbeat system) marked the task as died
+        # We'll create a new worker to trigger the mark_died check
+        checker_worker = GraphbandDB(db_path, worker="checker_worker", heartbeat_timeout=5)
+        
+        # Manually trigger mark_died to simulate what the heartbeat thread does
+        with checker_worker.connect() as conn:
+            cursor = conn.cursor()
+            checker_worker.mark_died(cursor)
+            conn.commit()
+        
+        # Verify the task is now marked as died
+        with main_worker.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT state FROM progress_table WHERE task_id = ?",
+                ("test_task_multiprocess",),
+            )
+            row = cursor.fetchone()
+            assert row is not None
+            assert row[0] == "died", f"Expected task to be 'died' but got '{row[0]}'"
+            
+        # Cleanup heartbeat threads
+        main_worker.stop_heartbeat()
+        checker_worker.stop_heartbeat()
+        
+    finally:
+        # Make sure process is cleaned up
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=2)
+            if process.is_alive():
+                process.kill()
+                process.join()
