@@ -200,7 +200,8 @@ class Laufband(t.Generic[_T]):
 
     def __len__(self) -> int:
         """Return the length of the data."""
-        return len(self.data)
+        with self.lock:
+            return len(self.data)
 
     def __iter__(self) -> Generator[_T, None, None]:
         """The generator that handles the iteration logic."""

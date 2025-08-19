@@ -31,6 +31,8 @@ class GraphTraversalProtocol(t.Protocol):
 
     def __iter__(self) -> Iterator[tuple[str, set[str]]]: ...
 
+    def __len__(self) -> int:
+        raise TypeError(f"{type(self).__name__} does not implement __len__")
 
 def _check_disabled(func: t.Callable) -> t.Callable:
     """Decorator to raise an error if Graphband is disabled."""
@@ -173,6 +175,11 @@ class Graphband(t.Generic[_T]):
         the graphband generator marking the job as completed.
         """
         self._close_trigger = True
+
+    def __len__(self) -> int:
+        """Return the number of tasks in the graph."""
+        with self.lock:
+            return len(self.graph_fn)
 
     @property
     def identifier(self) -> str:
