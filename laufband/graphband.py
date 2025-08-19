@@ -259,6 +259,7 @@ class Graphband(t.Generic[_T]):
                             completed_task_ids
                         ):
                             # Claim this task immediately by adding it as running
+                            # TODO: should be done via database!
                             with self.db.connect() as conn:
                                 cursor = conn.cursor()
                                 cursor.execute(
@@ -282,8 +283,71 @@ class Graphband(t.Generic[_T]):
                         graph_exhausted = True
                         break
                 
-                # If still no task and generator exhausted, we're done
+                # If still no task, check if we're done or need more from generator
                 if task_id is None:
+                    if graph_exhausted:
+                        # No more tasks from generator and no ready tasks found
+                        # Check if we're completely done
+                        completed = self.db.list_state("completed")
+                        total_tasks = len(self.db)
+                        if len(completed) == total_tasks:
+                            if self.cleanup:
+                                self.com.unlink()
+                            if tbar:
+                                tbar.close()
+                            return
+                        # Otherwise, still have uncompleted tasks but they may have dependencies
+                        # that aren't satisfied yet - this shouldn't happen with SequentialGraphProtocol
+                        # but could happen with other protocols
+                        break
+                    else:
+                        # Try one more time to see if generator is exhausted
+                        try:
+                            node, predecessors = next(graph_iterator)
+                            candidate_task_id = self.hash_fn(node)
+                            node_mapping[candidate_task_id] = node
+                            
+                            # Add this node to database dependencies only
+                            predecessor_task_ids = {
+                                self.hash_fn(pred) for pred in predecessors
+                            }
+                            self.db.add_task(candidate_task_id, predecessor_task_ids)
+                            
+                            # Check if this new task is ready
+                            completed_task_ids = set(self.db.list_state("completed"))
+                            if not predecessors or predecessor_task_ids.issubset(
+                                completed_task_ids
+                            ):
+                                # Claim this task immediately
+                                with self.db.connect() as conn:
+                                    cursor = conn.cursor()
+                                    cursor.execute(
+                                        """
+                                        INSERT OR IGNORE INTO progress_table (task_id, state, worker, count)
+                                        VALUES (?, 'running', ?, 1)
+                                        RETURNING task_id
+                                        """,
+                                        (candidate_task_id, self.db.worker),
+                                    )
+                                    row = cursor.fetchone()
+                                    if row:
+                                        conn.commit()
+                                        task_id = row[0]
+                            
+                            # If we found a task, continue with the main loop
+                            if task_id:
+                                continue
+                        except StopIteration:
+                            graph_exhausted = True
+                            # Now that graph is exhausted, check completion immediately
+                            completed = self.db.list_state("completed")
+                            total_tasks = len(self.db)
+                            if len(completed) == total_tasks:
+                                if self.cleanup:
+                                    self.com.unlink()
+                                if tbar:
+                                    tbar.close()
+                                return
                     break
 
             # Initialize progress bar if not done yet
