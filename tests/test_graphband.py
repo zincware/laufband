@@ -1,6 +1,9 @@
 import networkx as nx
 from laufband import Graphband
-from laufband.db import LaufbandDB
+import time
+import random
+import multiprocessing as mp
+from pathlib import Path
 
 
 def simple_graph():
@@ -319,3 +322,74 @@ def test_graphband_non_hashable_items(tmp_path):
     completed_task_ids = pbar.completed
     expected_task_ids = {"task_task_a", "task_task_b", "task_task_c", "task_task_d"}
     assert set(completed_task_ids) == expected_task_ids
+
+
+def worker_process(worker_id: int, db_path: Path, results_queue: mp.Queue):
+    """Worker function that processes a Graphband graph."""
+    digraph = nx.DiGraph()
+    for chain in range(4):  # 4 independent chains
+        for level in range(6):  # 6 levels deep
+            node_name = f"chain_{chain}_level_{level}"
+            digraph.add_node(node_name)
+            if level > 0:
+                digraph.add_edge(f"chain_{chain}_level_{level-1}", node_name)
+
+    processed_nodes = []
+    
+    try:
+        pbar = Graphband(
+            graph_fn=lambda: digraph, 
+            com=db_path,
+            identifier=f"worker_{worker_id}",
+            cleanup=False
+        )
+        
+        for node in pbar:
+            processed_nodes.append(node)
+            time.sleep(random.uniform(0, 0.2))
+            
+    except Exception as e:
+        results_queue.put((worker_id, "error", str(e)))
+        return
+    
+    results_queue.put((worker_id, "success", processed_nodes))
+
+
+def test_parallel_graphband_processing(tmp_path):
+    """Test that multiple Graphband workers don't process duplicate nodes."""
+    db_path = tmp_path / "parallel_test.db"
+    results_queue = mp.Queue()
+    
+    # Expected total nodes: 4 chains * 6 levels = 24 nodes
+    expected_total_nodes = 4 * 6
+    
+    processes = []
+    for worker_id in range(2):
+        p = mp.Process(target=worker_process, args=(worker_id, db_path, results_queue))
+        processes.append(p)
+        p.start()
+    
+    for p in processes:
+        p.join()
+    
+    # Collect results
+    results = {}
+    while not results_queue.empty():
+        worker_id, status, data = results_queue.get()
+        results[worker_id] = (status, data)
+    
+    assert len(results) == 2
+    for worker_id, (status, data) in results.items():
+        assert status == "success", f"Worker {worker_id} failed: {data}"
+    
+    all_processed_nodes = []
+    for worker_id, (status, processed_nodes) in results.items():
+        all_processed_nodes.extend(processed_nodes)
+    
+
+    assert len(all_processed_nodes) == expected_total_nodes
+    assert len(set(all_processed_nodes)) == expected_total_nodes
+    
+    # Verify each worker processed at least some nodes
+    for worker_id, (status, processed_nodes) in results.items():
+        assert len(processed_nodes) > 0
