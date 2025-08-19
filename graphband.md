@@ -25,3 +25,9 @@
 - Iteration stops when:
     - No tasks are ready or in_progress, and
     - Input generator (if present) is exhausted,
+
+TODO:
+- determine if data has len, then convert it to a graph and use the index as uuid? What if `insert` is used?
+- test features above manually
+- test `laufband watch`
+- test dependencies! The DB does not seem to contain them yet?

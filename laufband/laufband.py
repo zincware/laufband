@@ -1,6 +1,6 @@
 import os
 import typing as t
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Sequence, Iterable
 from pathlib import Path
 
 import networkx as nx
@@ -14,7 +14,7 @@ _T = t.TypeVar("_T", covariant=True)
 class Laufband(t.Generic[_T]):
     def __init__(
         self,
-        data: Sequence[_T],
+        data: Iterable[_T],
         *,
         lock: Lock | None = None,
         lock_path: Path | str | None = None,
@@ -101,16 +101,21 @@ class Laufband(t.Generic[_T]):
         """
         self.data = data
         
-        # Create UUID mapping for all items (keeps it simple and consistent)
-        import uuid
+        # Store the data source for lazy evaluation
+        self._data_source = data
         self._item_mapping = {}
-        
-        for item in data:
-            item_uuid = str(uuid.uuid4())
-            self._item_mapping[item_uuid] = item
+        self._mapping_created = False
         
         # Create a graph_fn that returns a graph with disconnected nodes (no edges)
         def graph_fn():
+            # Lazy evaluation - create mapping only when graph is requested
+            if not self._mapping_created:
+                import uuid
+                for item in self._data_source:
+                    item_uuid = str(uuid.uuid4())
+                    self._item_mapping[item_uuid] = item
+                self._mapping_created = True
+            
             G = nx.DiGraph()
             for item_uuid in self._item_mapping.keys():
                 G.add_node(item_uuid)
@@ -121,12 +126,15 @@ class Laufband(t.Generic[_T]):
         # Use default Laufband hash function if none provided
         if hash_fn is None:
             def laufband_hash_fn(item_uuid):
-                # Get the original item and find its index by iterating
+                # For lazy evaluation, we can't rely on iterating over original data
+                # Instead, use the UUID positions in the mapping
                 original_item = self._item_mapping[item_uuid]
-                for i, item in enumerate(data):
-                    if item is original_item:
-                        return str(i)
-                return str(id(original_item))  # Fallback if not found
+                uuid_list = list(self._item_mapping.keys())
+                try:
+                    index = uuid_list.index(item_uuid)
+                    return str(index)
+                except ValueError:
+                    return str(id(original_item))  # Fallback if not found
             hash_fn = laufband_hash_fn
         
         # Fix default lock path for backwards compatibility

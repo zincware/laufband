@@ -229,18 +229,17 @@ class GraphbandDB:
                     task_id TEXT PRIMARY KEY,
                     state TEXT DEFAULT 'pending',
                     worker TEXT,
-                    count INTEGER DEFAULT 0,
-                    task_data BLOB
+                    count INTEGER DEFAULT 0
                 )
             """)
             for node in graph.nodes():
                 task_id = hash_fn(node)
                 cursor.execute(
                     """
-                    INSERT OR IGNORE INTO progress_table (task_id, state, worker, task_data)
-                    VALUES (?, ?, ?, ?)
+                    INSERT OR IGNORE INTO progress_table (task_id, state, worker)
+                    VALUES (?, ?, ?)
                     """,
-                    (task_id, "pending", None, str(node).encode()),
+                    (task_id, "pending", None),
                 )
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS worker_table (
@@ -265,8 +264,7 @@ class GraphbandDB:
                         task_id TEXT PRIMARY KEY,
                         state TEXT DEFAULT 'pending',
                         worker TEXT,
-                        count INTEGER DEFAULT 0,
-                        task_data BLOB
+                        count INTEGER DEFAULT 0
                     )
                 """)
                 cursor.execute("""
@@ -280,10 +278,10 @@ class GraphbandDB:
                 task_id = hash_fn(node)
                 cursor.execute(
                     """
-                    INSERT OR IGNORE INTO progress_table (task_id, state, worker, task_data)
-                    VALUES (?, ?, ?, ?)
+                    INSERT OR IGNORE INTO progress_table (task_id, state, worker)
+                    VALUES (?, ?, ?)
                     """,
-                    (task_id, "pending", None, str(node).encode()),
+                    (task_id, "pending", None),
                 )
             conn.commit()
 

@@ -524,3 +524,18 @@ def test_laufband_hashable_objects_with_complex_hash(tmp_path):
     # Verify all user data is present
     user_ids = {item[1] for item in results}
     assert user_ids == {1, 2, 3}
+
+def test_consume_generator(tmp_path):
+    """Test consuming a generator with Laufband."""
+    raise_error = True
+
+    def generator():
+        if raise_error:
+            raise ValueError("Generator not ready yet")
+        yield from range(10)
+
+    pbar1 = Laufband(generator(), com=tmp_path / "laufband.sqlite", cleanup=False)
+
+    raise_error = False
+    results1 = list(pbar1)
+    assert len(results1) == 10
