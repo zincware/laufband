@@ -86,7 +86,7 @@ class GraphbandDB:
             count = cursor.fetchone()[0]
         return count
 
-    def __iter__(self) -> Iterator[int]:
+    def __iter__(self) -> Iterator[str]:
         """Iterate over the progress table, yielding job IDs.
 
         This will check if the worker is already registered and update the worker state.
@@ -232,37 +232,6 @@ class GraphbandDB:
         finally:
             conn.close()
 
-    def create(self, size: int):
-        """Create database for sequential tasks (backwards compatibility)."""
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE progress_table (
-                    task_id TEXT PRIMARY KEY,
-                    state TEXT,
-                    worker TEXT,
-                    count INTEGER DEFAULT 0
-                )
-            """)
-
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS worker_table (
-                    worker TEXT PRIMARY KEY,
-                    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            # For sequential tasks, add all tasks to progress_table immediately
-            # This maintains backward compatibility with old Laufband tests
-            for i in range(size):
-                cursor.execute(
-                    """
-                    INSERT OR IGNORE INTO progress_table (task_id, state, worker)
-                    VALUES (?, ?, ?)
-                    """,
-                    (str(i), None, None),  # No initial state for sequential tasks
-                )
-            conn.commit()
 
     def create_empty(self):
         """Create empty database with tables."""
@@ -310,100 +279,7 @@ class GraphbandDB:
                 )
             conn.commit()
 
-    def create_from_graph(self, graph, hash_fn: t.Callable[[t.Any], str]):
-        """Create database from a GraphTraversalProtocol."""
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE progress_table (
-                    task_id TEXT PRIMARY KEY,
-                    state TEXT,
-                    worker TEXT,
-                    count INTEGER DEFAULT 0
-                )
-            """)
 
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS dependencies (
-                    task_id TEXT,
-                    predecessor_id TEXT,
-                    PRIMARY KEY (task_id, predecessor_id)
-                )
-            """)
-
-            # Process GraphTraversalProtocol - only store dependencies
-            for node, predecessors in graph:
-                task_id = hash_fn(node)
-
-                # Add dependencies
-                for predecessor in predecessors:
-                    predecessor_id = hash_fn(predecessor)
-                    cursor.execute(
-                        """
-                        INSERT OR IGNORE INTO dependencies (task_id, predecessor_id)
-                        VALUES (?, ?)
-                        """,
-                        (task_id, predecessor_id),
-                    )
-
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS worker_table (
-                    worker TEXT PRIMARY KEY,
-                    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.commit()
-
-    def update_from_graph(self, graph, hash_fn: t.Callable[[t.Any], str]):
-        """Update database with new tasks from GraphTraversalProtocol."""
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            # Check if progress_table exists, create if it doesn't
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' "
-                "AND name='progress_table'"
-            )
-            if not cursor.fetchone():
-                # Table doesn't exist, create it
-                cursor.execute("""
-                    CREATE TABLE progress_table (
-                        task_id TEXT PRIMARY KEY,
-                        state TEXT DEFAULT 'pending',
-                        worker TEXT,
-                        count INTEGER DEFAULT 0
-                    )
-                """)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS dependencies (
-                        task_id TEXT,
-                        predecessor_id TEXT,
-                        PRIMARY KEY (task_id, predecessor_id),
-                        FOREIGN KEY (task_id) REFERENCES progress_table (task_id),
-                        FOREIGN KEY (predecessor_id) REFERENCES progress_table (task_id)
-                    )
-                """)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS worker_table (
-                        worker TEXT PRIMARY KEY,
-                        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-
-            # Process GraphTraversalProtocol - only store dependencies
-            for node, predecessors in graph:
-                task_id = hash_fn(node)
-
-                # Add dependencies
-                for predecessor in predecessors:
-                    predecessor_id = hash_fn(predecessor)
-                    cursor.execute(
-                        """
-                        INSERT OR IGNORE INTO dependencies (task_id, predecessor_id)
-                        VALUES (?, ?)
-                        """,
-                        (task_id, predecessor_id),
-                    )
-            conn.commit()
 
     def finalize(self, task_id: str, state: T_STATE = "completed"):
         with self.connect() as conn:
@@ -444,21 +320,6 @@ class GraphbandDB:
             row = cursor.fetchone()
         return row[0] if row else None
 
-    def get_task_item(self, task_id: str) -> t.Any:
-        """Get the original task item from task_id."""
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT task_data FROM progress_table
-                WHERE task_id = ?
-                """,
-                (task_id,),
-            )
-            row = cursor.fetchone()
-        if row:
-            return row[0].decode()
-        return None
 
     def get_job_stats(self) -> dict[str, int]:
         """Get counts of jobs in each state"""

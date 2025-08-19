@@ -123,7 +123,7 @@ class Laufband(t.Generic[_T]):
             def hash_fn(item: str) -> str:
                 return item
 
-        # Fix default lock path for backwards compatibility
+        # Set default lock path 
         if lock_path is None and lock is None:
             lock_path = "laufband.lock"
 
@@ -176,7 +176,7 @@ class Laufband(t.Generic[_T]):
     @property
     def completed(self) -> list[int]:
         """Return the indices of items that have been completed."""
-        # Convert string task IDs back to integers for backwards compatibility
+        # Convert internal string task IDs to integer indices for Laufband API
         task_ids = self._graphband.completed
         return [int(task_id) for task_id in task_ids]
 
