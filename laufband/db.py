@@ -28,8 +28,10 @@ class GraphbandDB:
         Unique identifier for the worker, defaults to the process ID.
     heartbeat_timeout : int
         Timeout in seconds to mark jobs as 'died' if the worker has not been seen.
-        With the background heartbeat thread updating every 10 seconds, defaults to 30 seconds.
+        With the background heartbeat thread updating regularly, defaults to 30 seconds.
         No longer needs to account for long iteration times.
+    heartbeat_interval : float
+        Interval in seconds between heartbeat updates. Defaults to 10.0 seconds.
     max_died_retries : int
         Number of retries for jobs that are marked as 'died'.
     _worker_checked : bool
@@ -39,6 +41,7 @@ class GraphbandDB:
     db_path: str | Path
     worker: str = field(default_factory=lambda: str(os.getpid()))
     heartbeat_timeout: int = 30
+    heartbeat_interval: float = 10.0
     max_died_retries: int = 0
     _worker_checked: bool = field(default=False, init=False)
     _heartbeat_thread: threading.Thread | None = field(default=None, init=False)
@@ -53,7 +56,7 @@ class GraphbandDB:
 
     def _heartbeat_loop(self):
         """Background thread updating worker heartbeat and marking died workers."""
-        while not self._heartbeat_stop_event.wait(timeout=10.0):
+        while not self._heartbeat_stop_event.wait(timeout=self.heartbeat_interval):
             try:
                 with self.connect() as conn:
                     cursor = conn.cursor()

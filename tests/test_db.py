@@ -488,8 +488,13 @@ def worker_process(db_path: Path, worker_id: str, ready_event: multiprocessing.E
     """Worker process that claims a task and then sleeps until killed."""
     worker = None
     try:
-        # Create worker with a shorter heartbeat timeout for faster testing
-        worker = GraphbandDB(db_path, worker=worker_id, heartbeat_timeout=5)
+        # Create worker with fast heartbeat for testing (0.5s interval, 2s timeout)
+        worker = GraphbandDB(
+            db_path, 
+            worker=worker_id, 
+            heartbeat_timeout=2,
+            heartbeat_interval=0.5
+        )
         
         # Claim a task
         result = worker.claim_task("test_task_multiprocess")
@@ -515,8 +520,13 @@ def test_multiprocess_worker_death_detection(tmp_path: Path):
     """Test that a killed worker process has its jobs marked as died."""
     db_path = tmp_path / "test_multiprocess_death.db"
     
-    # Set up the main worker to create the database
-    main_worker = GraphbandDB(db_path, worker="main_worker", heartbeat_timeout=5)
+    # Set up the main worker to create the database with fast heartbeat for testing
+    main_worker = GraphbandDB(
+        db_path, 
+        worker="main_worker", 
+        heartbeat_timeout=2,
+        heartbeat_interval=0.5
+    )
     main_worker.create_empty()
     
     # Don't add the task to the database beforehand - let claim_task create it
@@ -557,13 +567,18 @@ def test_multiprocess_worker_death_detection(tmp_path: Path):
             process.join()
         
         # Wait for the background heartbeat system to detect the dead worker
-        # The heartbeat runs every 10 seconds and timeout is 5 seconds
-        # So we need to wait at least 15 seconds for detection
-        time.sleep(16)
+        # The heartbeat runs every 0.5 seconds and timeout is 2 seconds
+        # So we need to wait at most 3 seconds for detection
+        time.sleep(3.5)
         
         # Check if another worker (or the heartbeat system) marked the task as died
         # We'll create a new worker to trigger the mark_died check
-        checker_worker = GraphbandDB(db_path, worker="checker_worker", heartbeat_timeout=5)
+        checker_worker = GraphbandDB(
+            db_path, 
+            worker="checker_worker", 
+            heartbeat_timeout=2,
+            heartbeat_interval=0.5
+        )
         
         # Manually trigger mark_died to simulate what the heartbeat thread does
         with checker_worker.connect() as conn:

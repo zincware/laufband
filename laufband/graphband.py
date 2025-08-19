@@ -64,6 +64,7 @@ class Graphband(t.Generic[_T]):
         cleanup: bool = False,
         failure_policy: t.Literal["continue", "stop"] = "continue",
         heartbeat_timeout: int | None = None,
+        heartbeat_interval: float = 10.0,
         max_died_retries: int | None = None,
         disable: bool | None = None,
         tqdm_kwargs: dict[str, t.Any] | None = None,
@@ -108,6 +109,8 @@ class Graphband(t.Generic[_T]):
             as "died" if the worker process is killed unexpectedly.
             With the background heartbeat thread updating every 10 seconds, defaults to 30 seconds
             or the value of the environment variable ``LAUFBAND_HEARTBEAT_TIMEOUT`` if set.
+        heartbeat_interval : float
+            Interval in seconds between heartbeat updates. Defaults to 10.0 seconds.
         max_died_retries : int
             The number of times to retry processing items that have been marked as died.
             If set to 0, no retries will be attempted.
@@ -152,6 +155,7 @@ class Graphband(t.Generic[_T]):
                 self.com,
                 worker=identifier(),
                 heartbeat_timeout=heartbeat_timeout,
+                heartbeat_interval=heartbeat_interval,
                 max_died_retries=max_died_retries,
             )
         else:
@@ -159,6 +163,7 @@ class Graphband(t.Generic[_T]):
                 self.com,
                 worker=identifier,
                 heartbeat_timeout=heartbeat_timeout,
+                heartbeat_interval=heartbeat_interval,
                 max_died_retries=max_died_retries,
             )
         self.cleanup = cleanup
