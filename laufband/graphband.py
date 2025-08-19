@@ -26,13 +26,10 @@ def _check_disabled(func: t.Callable) -> t.Callable:
 
 
 def _default_hash_fn(item: t.Any) -> str:
-    """Default hash function for tasks."""
-    try:
-        # Try to hash the item directly if it's hashable
-        return str(hash(item))
-    except TypeError:
-        # If not hashable, use string representation
-        return hashlib.sha256(str(item).encode()).hexdigest()[:16]
+    """Default hash function for tasks (deterministic across processes)."""
+    # Always use string representation for deterministic hashing across processes
+    # Python's built-in hash() is randomized and will differ between processes
+    return hashlib.sha256(str(item).encode()).hexdigest()
 
 
 class Graphband(t.Generic[_T]):
