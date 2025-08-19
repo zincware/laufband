@@ -1,90 +1,149 @@
-import sqlite3
 import time
 from pathlib import Path
 
 import pytest
 
-from laufband.db import LaufbandDB  # Assuming your class is in laufband/db.py
+from laufband.db import GraphbandDB  # Assuming your class is in laufband/db.py
 
 
 # Use a function to create a fresh ProgressTracker instance for each test
 @pytest.fixture
-def tracker(tmp_path: Path) -> LaufbandDB:
-    return LaufbandDB(tmp_path / "test_progress.db")
+def tracker(tmp_path: Path) -> GraphbandDB:
+    return GraphbandDB(tmp_path / "test_progress.db")
 
 
-def test_create_table(tracker: LaufbandDB):
-    tracker.create(10)
-    assert tracker.db_path.exists()
-    assert tracker.list_state("pending") == list(range(10))
+def test_create_table(tracker: GraphbandDB):
+    tracker.create_empty()
+    assert Path(tracker.db_path).exists()
+    # Test database exists and has correct tables
 
-    with pytest.raises(sqlite3.OperationalError):
-        # Attempt to create the table again, which should fail
-        tracker.create(10)
+    with tracker.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = {row[0] for row in cursor.fetchall()}
+        assert "progress_table" in tables
+        assert "worker_table" in tables
 
 
-def test_len(tracker: LaufbandDB):
-    tracker.create(10)
+def test_len(tracker: GraphbandDB):
+    tracker.create_empty()
+    # Add 10 tasks manually
+    for i in range(10):
+        tracker.add_task(str(i), set())
+        with tracker.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO progress_table (task_id, state) VALUES (?, 'pending')",
+                (str(i),),
+            )
+            conn.commit()
     assert len(tracker) == 10
 
 
-def test_next(tracker: LaufbandDB):
-    tracker.create(10)
+def test_next(tracker: GraphbandDB):
+    tracker.create_empty()
+    # Add 10 tasks manually
+    for i in range(10):
+        with tracker.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
+                (str(i),),
+            )
+            conn.commit()
 
     data = list(tracker)
     assert tracker.list_state("running") == data
-    assert data == list(range(10))
+    assert data == [str(x) for x in range(10)]
 
 
-def test_set_completed(tracker: LaufbandDB):
-    tracker.create(10)
+def test_set_completed(tracker: GraphbandDB):
+    tracker.create_empty()
+    # Add 10 tasks manually
+    for i in range(10):
+        with tracker.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
+                (str(i),),
+            )
+            conn.commit()
 
     for job in tracker:
         tracker.finalize(job, "completed")
 
-    assert tracker.list_state("completed") == list(range(10))
+    assert tracker.list_state("completed") == [str(x) for x in range(10)]
     assert tracker.list_state("running") == []
     assert tracker.list_state("failed") == []
-    assert tracker.list_state("pending") == []
 
 
-def test_set_failed(tracker: LaufbandDB):
-    tracker.create(10)
+def test_set_failed(tracker: GraphbandDB):
+    tracker.create_empty()
+    # Add 10 tasks manually
+    for i in range(10):
+        with tracker.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
+                (str(i),),
+            )
+            conn.commit()
 
     for job in tracker:
         tracker.finalize(job, "failed")
 
-    assert tracker.list_state("failed") == list(range(10))
+    assert tracker.list_state("failed") == [str(x) for x in range(10)]
     assert tracker.list_state("running") == []
     assert tracker.list_state("completed") == []
-    assert tracker.list_state("pending") == []
 
 
-def test_get_worker(tracker: LaufbandDB):
-    tracker.create(10)
-    tracker.worker = "worker_1"
+def test_get_worker(tracker: GraphbandDB):
+    tracker.create_empty()
+    # Add 10 tasks manually
+    for i in range(10):
+        with tracker.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
+                (str(i),),
+            )
+            conn.commit()
+
+    tracker.set_worker("worker_1")
 
     for job in tracker:
         tracker.finalize(job, "completed")
-        if job == 5:
+        if job == "5":
             break
 
-    tracker.worker = "worker_2"
+    tracker.set_worker("worker_2")
 
     for job in tracker:
         tracker.finalize(job, "completed")
 
     for idx in range(10):
-        assert tracker.get_worker(idx) == "worker_2" if idx > 5 else "worker_1"
+        if idx <= 5:
+            assert tracker.get_worker(str(idx)) == "worker_1"
+        else:
+            assert tracker.get_worker(str(idx)) == "worker_2"
 
 
-def test_dublicate_worker_identifier(tmp_path: Path):
-    a = LaufbandDB(tmp_path / "test.db", worker="worker")
-    b = LaufbandDB(tmp_path / "test.db", worker="worker")
+def test_duplicate_worker_identifier(tmp_path: Path):
+    a = GraphbandDB(tmp_path / "test.db", worker="worker")
+    b = GraphbandDB(tmp_path / "test.db", worker="worker")
 
-    a.create(5)
+    a.create_empty()
+    # Add 5 tasks manually
+    for i in range(5):
+        with a.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
+                (str(i),),
+            )
+            conn.commit()
 
-    assert list(a) == list(range(5))
+    assert list(a) == [str(x) for x in range(5)]
     assert list(a) == []  # test creating the "iter" object again
     with pytest.raises(
         ValueError, match="Worker with identifier 'worker' already exists."
@@ -96,14 +155,23 @@ def test_dublicate_worker_identifier(tmp_path: Path):
 def test_retry_killed(tmp_path: Path, max_died_retries: int):
     """Test if laufband can handle killed jobs."""
     com = tmp_path / "laufband.sqlite"
-    db = LaufbandDB(com, max_died_retries=max_died_retries)
-    db.create(5)
+    db = GraphbandDB(com, max_died_retries=max_died_retries)
+    db.create_empty()
+    # Add 5 tasks manually
+    for i in range(5):
+        with db.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
+                (str(i),),
+            )
+            conn.commit()
 
-    assert list(db) == list(range(5))
+    assert list(db) == [str(x) for x in range(5)]
 
     for _ in range(max_died_retries):
-        db.finalize(0, "died")
-        assert list(db) == [0]
+        db.finalize("0", "died")
+        assert list(db) == ["0"]
 
     assert list(db) == []
 
@@ -111,38 +179,55 @@ def test_retry_killed(tmp_path: Path, max_died_retries: int):
 def test_heartbeat_timeout(tmp_path: Path):
     """Test if laufband can handle killed jobs."""
     com = tmp_path / "laufband.sqlite"
-    db_1 = LaufbandDB(com, heartbeat_timeout=0.1, worker="1")
-    db_1.create(2)
+    db_1 = GraphbandDB(com, heartbeat_timeout=1, worker="1")
+    db_1.create_empty()
+    # Add 2 tasks manually
+    for i in range(2):
+        with db_1.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
+                (str(i),),
+            )
+            conn.commit()
 
-    assert list(db_1) == [0, 1]
-    assert db_1.list_state("running") == [0, 1]
+    assert list(db_1) == ["0", "1"]
+    assert db_1.list_state("running") == ["0", "1"]
 
     time.sleep(2)
 
-    db_2 = LaufbandDB(com, worker="2", heartbeat_timeout=1)
+    db_2 = GraphbandDB(com, worker="2", heartbeat_timeout=1)
     assert list(db_2) == []  # update the worker state
     assert db_2.list_state("running") == []
-    assert db_2.list_state("died") == [0, 1]
+    assert db_2.list_state("died") == ["0", "1"]
 
-    db_3 = LaufbandDB(com, worker="3", heartbeat_timeout=1, max_died_retries=1)
+    db_3 = GraphbandDB(com, worker="3", heartbeat_timeout=1, max_died_retries=1)
 
-    assert list(db_3) == [0, 1]  # update the worker state from 'died' to 'running'
-    assert db_3.list_state("running") == [0, 1]
+    assert list(db_3) == ["0", "1"]  # update the worker state from 'died' to 'running'
+    assert db_3.list_state("running") == ["0", "1"]
     assert db_3.list_state("died") == []
 
 
 def test_db_identifier_none(tmp_path: Path):
     with pytest.raises(ValueError):
-        LaufbandDB(tmp_path / "test.db", worker=None)
+        GraphbandDB(tmp_path / "test.db", worker=None)  # type: ignore
 
 
-def test_get_job_stats(tracker: LaufbandDB):
+def test_get_job_stats(tracker: GraphbandDB):
     """Test get_job_stats returns correct counts for each state."""
-    tracker.create(10)
+    tracker.create_empty()
+    # Add 10 tasks manually
+    for i in range(10):
+        with tracker.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
+                (str(i),),
+            )
+            conn.commit()
 
-    # Initially all jobs should be pending
+    # Initially all jobs are available (NULL state for sequential tasks)
     stats = tracker.get_job_stats()
-    assert stats["pending"] == 10
     assert stats["running"] == 0
     assert stats["completed"] == 0
     assert stats["failed"] == 0
@@ -153,21 +238,29 @@ def test_get_job_stats(tracker: LaufbandDB):
     assert len(jobs) == 10
 
     # Complete some jobs
-    tracker.finalize(0, "completed")
-    tracker.finalize(1, "completed")
-    tracker.finalize(2, "failed")
+    tracker.finalize("0", "completed")
+    tracker.finalize("1", "completed")
+    tracker.finalize("2", "failed")
 
     stats = tracker.get_job_stats()
-    assert stats["pending"] == 0
     assert stats["running"] == 7  # 10 - 3 processed
     assert stats["completed"] == 2
     assert stats["failed"] == 1
     assert stats["died"] == 0
 
 
-def test_get_worker_info_single_worker(tracker: LaufbandDB):
+def test_get_worker_info_single_worker(tracker: GraphbandDB):
     """Test get_worker_info with a single worker."""
-    tracker.create(5)
+    tracker.create_empty()
+    # Add 5 tasks manually
+    for i in range(5):
+        with tracker.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
+                (str(i),),
+            )
+            conn.commit()
     tracker.worker = "test_worker"
 
     # Initially no workers should be in the table
@@ -193,9 +286,9 @@ def test_get_worker_info_single_worker(tracker: LaufbandDB):
     assert worker["last_seen"] is not None
 
     # Complete some jobs
-    tracker.finalize(0, "completed")
-    tracker.finalize(1, "completed")
-    tracker.finalize(2, "failed")
+    tracker.finalize("0", "completed")
+    tracker.finalize("1", "completed")
+    tracker.finalize("2", "failed")
 
     worker_info = tracker.get_worker_info()
     worker = worker_info[0]
@@ -210,8 +303,17 @@ def test_get_worker_info_multiple_workers(tmp_path: Path):
     db_path = tmp_path / "test_multi_worker.db"
 
     # Worker 1 processes first batch
-    worker1 = LaufbandDB(db_path, worker="worker_1")
-    worker1.create(10)
+    worker1 = GraphbandDB(db_path, worker="worker_1")
+    worker1.create_empty()
+    # Add 10 tasks manually
+    for i in range(10):
+        with worker1.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
+                (str(i),),
+            )
+            conn.commit()
 
     # Process only 3 jobs with worker1
     jobs1 = []
@@ -222,7 +324,7 @@ def test_get_worker_info_multiple_workers(tmp_path: Path):
         worker1.finalize(job, "completed")
 
     # Worker 2 processes next batch
-    worker2 = LaufbandDB(db_path, worker="worker_2")
+    worker2 = GraphbandDB(db_path, worker="worker_2")
 
     # Process 2 jobs with worker2
     jobs2 = []
@@ -260,14 +362,23 @@ def test_get_worker_info_multiple_workers(tmp_path: Path):
 def test_get_worker_info_with_retries(tmp_path: Path):
     """Test get_worker_info tracks max retries correctly."""
     db_path = tmp_path / "test_retries.db"
-    worker = LaufbandDB(db_path, worker="retry_worker", max_died_retries=2)
-    worker.create(3)
+    worker = GraphbandDB(db_path, worker="retry_worker", max_died_retries=2)
+    worker.create_empty()
+    # Add 3 tasks manually
+    for i in range(3):
+        with worker.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO progress_table (task_id, state) VALUES (?, NULL)",
+                (str(i),),
+            )
+            conn.commit()
 
     _ = list(worker)
 
     # Simulate some retries by marking jobs as died and reprocessing
-    worker.finalize(0, "died")
-    worker.finalize(1, "died")
+    worker.finalize("0", "died")
+    worker.finalize("1", "died")
 
     # Process died jobs again (this increments count)
     _ = list(worker)  # Should get the died jobs back
@@ -277,3 +388,96 @@ def test_get_worker_info_with_retries(tmp_path: Path):
 
     # max_retries should reflect the highest count value
     assert worker_data["max_retries"] >= 1  # Jobs have been retried at least once
+
+
+def test_worker_registration_on_task_claim(tmp_path: Path):
+    """Test that workers are properly registered in worker_table when claiming tasks."""
+    db_path = tmp_path / "test_worker_registration.db"
+    worker = GraphbandDB(db_path, worker="claim_test_worker")
+    worker.create_empty()
+
+    # Initially, worker_table should be empty
+    with worker.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM worker_table")
+        assert cursor.fetchone()[0] == 0
+
+    # Use claim_task method
+    result = worker.claim_task("test_task_1")
+    assert result == "test_task_1"
+
+    # Worker should now be registered in worker_table
+    with worker.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT worker, last_seen FROM worker_table WHERE worker = ?",
+            (worker.worker,),
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        assert row[0] == "claim_test_worker"
+        assert row[1] is not None  # last_seen timestamp should be set
+
+    # get_worker_info should now find the worker
+    worker_info = worker.get_worker_info()
+    assert len(worker_info) == 1
+    assert worker_info[0]["worker"] == "claim_test_worker"
+    assert worker_info[0]["active_jobs"] == 1
+    assert worker_info[0]["last_seen"] is not None
+
+
+def test_worker_registration_on_graph_task_claim(tmp_path: Path):
+    """Test that workers are properly registered when claiming graph-based tasks."""
+    db_path = tmp_path / "test_graph_worker_registration.db"
+    worker = GraphbandDB(db_path, worker="graph_test_worker")
+    worker.create_empty()
+
+    # Add a task that can be claimed
+    worker.add_task("graph_task_1", set())
+
+    # Simulate claiming a task through get_ready_task (similar to graphband usage)
+    # First, we need to add the task to progress_table as pending
+    with worker.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO progress_table (task_id, state) VALUES (?, 'pending')",
+            ("graph_task_1",),
+        )
+        conn.commit()
+
+    # Initially, worker_table should be empty
+    with worker.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM worker_table")
+        assert cursor.fetchone()[0] == 0
+
+    # Simulate a simple graph with one ready task
+    def simple_graph():
+        yield ("task_node", [])  # No dependencies
+
+    def hash_fn(node):
+        return "graph_task_1"  # Maps to our pending task
+
+    # Use get_ready_task method
+    tasks = list(worker.get_ready_task(simple_graph(), hash_fn))
+    assert len(tasks) == 1
+    assert tasks[0] == "graph_task_1"
+
+    # Worker should now be registered in worker_table
+    with worker.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT worker, last_seen FROM worker_table WHERE worker = ?",
+            (worker.worker,),
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        assert row[0] == "graph_test_worker"
+        assert row[1] is not None  # last_seen timestamp should be set
+
+    # get_worker_info should now find the worker
+    worker_info = worker.get_worker_info()
+    assert len(worker_info) == 1
+    assert worker_info[0]["worker"] == "graph_test_worker"
+    assert worker_info[0]["active_jobs"] == 1
+    assert worker_info[0]["last_seen"] is not None

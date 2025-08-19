@@ -9,7 +9,7 @@ import pytest
 from flufl.lock import Lock
 
 from laufband import Laufband
-from laufband.db import LaufbandDB
+from laufband.db import GraphbandDB
 
 
 def test_iter_default(tmp_path):
@@ -21,7 +21,7 @@ def test_iter_default(tmp_path):
 
     com_file = tmp_path / "laufband.sqlite"
 
-    for point in Laufband(data, cleanup=True):
+    for point in Laufband(data, cleanup=True, com=com_file):
         filecontent = json.loads(output.read_text())
         filecontent["data"].append(point)
         output.write_text(json.dumps(filecontent))
@@ -35,7 +35,7 @@ def test_iter_default(tmp_path):
 def test_iter(tmp_path):
     lock = Lock("ptqdm.lock")
     data = list(range(100))
-    db = LaufbandDB(tmp_path / "laufband.sqlite")
+    db = GraphbandDB(tmp_path / "laufband.sqlite")
 
     output = tmp_path / "data.json"
     output.write_text(json.dumps({"data": []}))
@@ -45,7 +45,7 @@ def test_iter(tmp_path):
             filecontent = json.loads(output.read_text())
             filecontent["data"].append(point)
             output.write_text(json.dumps(filecontent))
-            assert db.list_state("running") == [point]
+            assert db.list_state("running") == [str(point)]
 
     results = json.loads(output.read_text())["data"]
     assert results == data
@@ -113,7 +113,7 @@ def test_resume_progress(tmp_path):
     lock = Lock("ptqdm.lock")
     data = list(range(10))
     db_path = tmp_path / "laufband.sqlite"
-    db = LaufbandDB(db_path)
+    db = GraphbandDB(db_path)
 
     output = tmp_path / "data.json"
     output.write_text(json.dumps({"data": []}))
@@ -132,9 +132,9 @@ def test_resume_progress(tmp_path):
 
     assert len(json.loads(output.read_text())["data"]) == 6
     assert db.list_state("running") == []
-    assert db.list_state("completed") == list(range(6))
+    assert db.list_state("completed") == [str(i) for i in range(6)]
     assert db.list_state("failed") == []
-    assert db.list_state("pending") == list(range(6, 10))
+    # With lazy consumption, pending tasks don't exist in DB
 
     # resume processing
     for point in Laufband(data, lock=lock, com=db_path):
@@ -145,15 +145,15 @@ def test_resume_progress(tmp_path):
 
     assert len(json.loads(output.read_text())["data"]) == 10
     assert db.list_state("running") == []
-    assert db.list_state("completed") == list(range(10))
+    assert db.list_state("completed") == [str(i) for i in range(10)]
     assert db.list_state("failed") == []
-    assert db.list_state("pending") == []
+    # With lazy consumption, no pending state exists
 
 
 def test_failed(tmp_path):
     """Test if laufband can handle failed jobs."""
     com = tmp_path / "laufband.sqlite"
-    db = LaufbandDB(com)
+    db = GraphbandDB(com)
 
     with pytest.raises(ValueError):
         data = list(range(100))
@@ -164,15 +164,15 @@ def test_failed(tmp_path):
                 raise ValueError("Simulated failure")
 
     assert db.list_state("running") == []
-    assert db.list_state("completed") == list(range(50))
-    assert db.list_state("failed") == [50]
-    assert db.list_state("pending") == list(range(51, 100))
+    assert db.list_state("completed") == [str(i) for i in range(50)]
+    assert db.list_state("failed") == ["50"]
+    # With lazy consumption, remaining tasks aren't in DB until needed
 
 
 def test_failed_via_break(tmp_path):
     """Test if laufband can handle failed jobs."""
     com = tmp_path / "laufband.sqlite"
-    db = LaufbandDB(com)
+    db = GraphbandDB(com)
 
     data = list(range(100))
     pbar = Laufband(data, com=com)
@@ -182,31 +182,36 @@ def test_failed_via_break(tmp_path):
             break
 
     assert db.list_state("running") == []
-    assert db.list_state("completed") == list(range(50))
-    assert db.list_state("failed") == [50]
-    assert db.list_state("pending") == list(range(51, 100))
+    assert db.list_state("completed") == [str(i) for i in range(50)]
+    assert db.list_state("failed") == ["50"]
+    # With lazy consumption, pending tasks don't exist in DB
 
     assert pbar.running == []
     assert pbar.completed == list(range(50))
     assert pbar.failed == [50]
-    assert pbar.pending == list(range(51, 100))
+    # With lazy consumption, pending tasks don't exist in DB until needed
     assert pbar.died == []
 
 
-def test_inconsistent_db(tmp_path):
-    """Test if laufband can handle inconsistent database."""
-    db = LaufbandDB(tmp_path / "laufband1.sqlite")
+def test_dynamic_db_expansion(tmp_path):
+    """Test if laufband can handle dynamic database expansion with unknown lengths."""
+    db = GraphbandDB(tmp_path / "laufband1.sqlite")
 
+    # First run with 10 items
+    results1 = []
     for i in Laufband(list(range(10)), com=db.db_path):
-        pass
+        results1.append(i)
 
-    # same database, different size is not allowed
-    with pytest.raises(
-        ValueError,
-        match="The size of the data does not match the size of the database.",
-    ):
-        for i in Laufband(list(range(100)), com=db.db_path):
-            pass
+    assert results1 == list(range(10))
+
+    # Second run with 100 items - should work and add new items
+    results2 = []
+    for i in Laufband(list(range(100)), com=db.db_path):
+        results2.append(i)
+
+    # Should process the new items (10-99) that weren't in the first run
+    assert len(results2) == 90
+    assert set(results2) == set(range(10, 100))
 
 
 def test_identifier(tmp_path):
@@ -214,7 +219,7 @@ def test_identifier(tmp_path):
     lock = Lock("ptqdm.lock")
     data = list(range(100))
     com = tmp_path / "laufband.sqlite"
-    db = LaufbandDB(com)
+    db = GraphbandDB(com)
 
     pbar = Laufband(data, lock=lock, com=com, identifier="worker_1")
 
@@ -261,7 +266,8 @@ def test_iter_finished(tmp_path):
         if idx == 50:
             assert len(pbar.completed) == 50
             assert len(pbar.running) == 1
-            assert len(pbar.pending) == 49
+            # With lazy consumption, tasks don't exist in DB until processed
+            # so no "pending" concept exists
 
     assert len(pbar.completed) == len(pbar)
 
@@ -318,10 +324,9 @@ def test_disable(tmp_path):
     #  to the default behavior of Laufband
     assert list(pbar) == data
 
-    assert pbar.com.exists()
+    assert not pbar.com.exists()
 
-    with pytest.raises(RuntimeError):
-        pbar.pending
+    # .pending property no longer exists with lazy consumption
     with pytest.raises(RuntimeError):
         pbar.completed
     with pytest.raises(RuntimeError):
@@ -350,3 +355,199 @@ def test_disable_via_env(disable_laufband):
     """Test if Laufband can be disabled via environment variable."""
     pbar = Laufband(list(range(100)))
     assert pbar.disabled is True
+
+
+def test_laufband_as_graphband_wrapper(tmp_path):
+    """Test that Laufband properly wraps Graphband with disconnected nodes."""
+    data = list(range(10))
+    pbar = Laufband(data, com=tmp_path / "laufband.sqlite", cleanup=False)
+
+    # Should process all items without dependencies
+    results = list(pbar)
+    assert set(results) == set(data)
+
+    # Should have no failures since no dependencies
+    assert len(pbar.failed) == 0
+
+
+def test_laufband_generator_support(tmp_path):
+    """Test that Laufband works with generators (lazy discovery)."""
+
+    def data_generator():
+        for i in range(5):
+            yield f"item-{i}"
+
+    # Convert generator to list since Laufband expects sequence
+    data = list(data_generator())
+    pbar = Laufband(data, com=tmp_path / "laufband.sqlite", cleanup=True)
+
+    results = list(pbar)
+    expected = [f"item-{i}" for i in range(5)]
+    assert set(results) == set(expected)
+
+
+def test_laufband_hash_function_behavior(tmp_path):
+    """Test Laufband's hash function behavior for task identity."""
+    data = ["a", "b", "c"]
+    pbar = Laufband(
+        data, com=tmp_path / "laufband.sqlite", cleanup=False
+    )  # Don't cleanup so we can check state
+
+    # Process items
+    results = list(pbar)
+    assert set(results) == set(data)
+
+    # Task IDs should be string indices for compatibility
+    completed_task_ids = pbar.completed
+    expected_indices = [0, 1, 2]  # Indices of items in data
+    assert set(completed_task_ids) == set(expected_indices)
+
+
+def test_laufband_unknown_length_sequences(tmp_path):
+    """Test that Laufband now supports unknown length sequences."""
+
+    class UnknownLengthSequence:
+        def __init__(self, data):
+            self.data = data
+
+        def __getitem__(self, index):
+            return self.data[index]
+
+        def __iter__(self):
+            return iter(self.data)
+
+        # Intentionally no __len__ method
+
+    data = UnknownLengthSequence([1, 2, 3, 4, 5])
+    pbar = Laufband(data, com=tmp_path / "laufband.sqlite", cleanup=True)
+
+    # Should work even without known length
+    results = list(pbar)
+    assert set(results) == {1, 2, 3, 4, 5}
+
+
+def test_laufband_with_custom_hash_function(tmp_path):
+    """Test Laufband with custom hash function for task identity."""
+    # Use simple objects but with custom hash function
+    data = ["task_alpha", "task_beta", "task_gamma"]
+
+    # Custom hash function that works with UUID mapping
+    # The function receives item_uuid, so we need to access the original item
+    # via the mapping
+    def custom_hash(item_uuid):
+        # This is a bit artificial since we need to access the Laufband instance
+        # In practice, users would structure this differently
+        # For this test, let's just create a hash based on the UUID itself
+        return f"custom-uuid-{item_uuid[:8]}"
+
+    pbar = Laufband(
+        data, hash_fn=custom_hash, com=tmp_path / "laufband.sqlite", cleanup=False
+    )
+
+    # Should process all items using custom hash function
+    results = list(pbar)
+    assert len(results) == 3
+    assert set(results) == {"task_alpha", "task_beta", "task_gamma"}
+
+    # Verify the custom hash function was used for task IDs
+    underlying_completed = pbar._graphband.completed
+    # Task IDs should start with "custom-uuid-" followed by the first 8 chars of UUID
+    assert all(task_id.startswith("custom-uuid-") for task_id in underlying_completed)
+    assert len(underlying_completed) == 3
+
+
+def test_laufband_non_hashable_items(tmp_path):
+    """Test Laufband with non-hashable items (lists)."""
+    # Non-hashable data - lists cannot be dictionary keys
+    data = [[1, 2], [3, 4], [5, 6]]
+
+    pbar = Laufband(data, com=tmp_path / "laufband.sqlite", cleanup=False)
+
+    # Should process all items correctly
+    results = list(pbar)
+    assert len(results) == 3
+    assert all(isinstance(item, list) for item in results)
+
+    # Results should contain all original lists
+    results_set = {
+        tuple(item) for item in results
+    }  # Convert to tuples for set comparison
+    expected_set = {(1, 2), (3, 4), (5, 6)}
+    assert results_set == expected_set
+
+    # Should have processed all tasks
+    assert len(pbar.completed) == 3
+
+
+def test_laufband_mixed_hashable_non_hashable(tmp_path):
+    """Test Laufband with mixed hashable and non-hashable items."""
+    # Mix of hashable and non-hashable items
+    data = [
+        "string",  # hashable
+        [1, 2, 3],  # non-hashable list
+        42,  # hashable
+        {"key": "value"},  # non-hashable dict
+        (1, 2),  # hashable tuple
+    ]
+
+    pbar = Laufband(data, com=tmp_path / "laufband.sqlite", cleanup=False)
+
+    results = list(pbar)
+    assert len(results) == 5
+
+    # Check each type is preserved
+    result_types = [type(item).__name__ for item in results]
+    expected_types = ["str", "list", "int", "dict", "tuple"]
+    assert set(result_types) == set(expected_types)
+
+    # Check specific values are preserved
+    assert "string" in results
+    assert [1, 2, 3] in results
+    assert 42 in results
+    assert {"key": "value"} in results
+    assert (1, 2) in results
+
+
+def test_laufband_hashable_objects_with_complex_hash(tmp_path):
+    """Test Laufband with hashable objects but complex custom hash function."""
+    # Use tuples (hashable) but with custom identification
+    data = [
+        ("user", 1, "john"),
+        ("user", 2, "jane"),
+        ("user", 3, "bob"),
+    ]
+
+    # Custom hash function using specific tuple elements
+    def user_hash(item_uuid):
+        # Get the original item from UUID mapping
+        # This function operates on UUIDs, so we need to access the underlying data
+        return f"user_{id(item_uuid)}"  # Simple example using object id
+
+    pbar = Laufband(
+        data, hash_fn=user_hash, com=tmp_path / "laufband.sqlite", cleanup=False
+    )
+
+    results = list(pbar)
+    assert len(results) == 3
+    assert all(isinstance(item, tuple) for item in results)
+    assert all(item[0] == "user" for item in results)
+
+    # Verify all user data is present
+    user_ids = {item[1] for item in results}
+    assert user_ids == {1, 2, 3}
+
+
+def test_consume_generator(tmp_path):
+    """Test consuming a generator with Laufband."""
+    raise_error = True
+
+    def generator():
+        if raise_error:
+            raise ValueError("Generator not ready yet")
+        yield from range(10)
+
+    pbar1 = Laufband(generator(), com=tmp_path / "laufband.sqlite", cleanup=False)
+
+    raise_error = False
+    results1 = list(pbar1)
+    assert len(results1) == 10

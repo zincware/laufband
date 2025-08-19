@@ -18,7 +18,7 @@ from rich.progress import (
 from rich.table import Table
 from rich.text import Text
 
-from laufband.db import LaufbandDB
+from laufband.db import GraphbandDB
 
 ACTIVITY_TIMEOUT_SECONDS = 300  # 5 minutes
 
@@ -32,7 +32,7 @@ class LaufbandStatusDisplay:
     def _ensure_db_connection(self):
         """Ensure database connection exists, create if needed"""
         if self.db is None and self.db_path.exists():
-            self.db = LaufbandDB(self.db_path, worker="cli_viewer")
+            self.db = GraphbandDB(self.db_path, worker="cli_viewer")
 
     def get_job_stats(self) -> Dict[str, int] | None:
         """Get counts of jobs in each state"""
@@ -62,23 +62,37 @@ class LaufbandStatusDisplay:
 
     def create_progress_bar(self, stats: Dict[str, int]) -> Panel:
         """Create overall progress bar"""
-        total = sum(stats.values())
-        completed = stats["completed"]
-        failed = stats["failed"]
-
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeRemainingColumn(),
-        )
-
-        progress.add_task(
-            f"Overall Progress ({completed + failed}/{total} complete)",
-            total=total,
-            completed=completed + failed,
-        )
+        total_from_metadata = self.db.get_metadata("total_tasks")
+        if total_from_metadata is not None:
+            total = int(total_from_metadata)
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(),
+            )
+            completed = stats.get("completed", 0)
+            failed = stats.get("failed", 0)
+            progress.add_task(
+                f"Overall Progress ({completed + failed}/{total} complete)",
+                total=total,
+                completed=completed + failed,
+            )
+        else:
+            total_discovered = sum(stats.values())
+            completed = stats.get("completed", 0)
+            failed = stats.get("failed", 0)
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+            )
+            progress.add_task(
+                f"Progress ({completed + failed}/{total_discovered} discovered)",
+                total=None,
+            )
 
         return Panel(progress, title="Overall Progress")
 

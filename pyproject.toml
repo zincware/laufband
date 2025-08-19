@@ -1,6 +1,6 @@
 [project]
 name = "laufband"
-version = "0.1.6"
+version = "0.1.7"
 description = "Parallel Iteration with File-Based Coordination"
 authors = [
     { name = "Fabian Zills", email = "fzills@icp.uni-stuttgart.de" },
@@ -12,6 +12,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "flufl-lock>=8.1.0",
     "rich>=14.0.0",
+    "networkx>=3.4.2",
 ]
 
 [dependency-groups]
@@ -20,6 +21,7 @@ dev = [
     "ruff>=0.11.7",
     "pytest-cov>=6.1.1",
     "pytest-xdist>=3.6.1",
+    "ipykernel>=6.30.1",
 ]
 
 atomic = [

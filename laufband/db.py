@@ -7,15 +7,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-T_STATE = t.Literal["running", "pending", "failed", "completed", "died"]
+T_STATE = t.Literal["running", "failed", "completed", "died"]
 # failed: the job failed with some exit code
 # died: the python process was killed and the worker could not update the
 #       state of the job. Detected by another worker updating the database
 
 
 @dataclass
-class LaufbandDB:
-    """Laufband database interface for managing job progress and worker states.
+class GraphbandDB:
+    """Graphband database interface for managing task progress and worker states.
+
+    Supports both sequential tasks (Laufband) and DAG tasks (Graphband).
 
     Attributes
     ----------
@@ -41,6 +43,42 @@ class LaufbandDB:
         if self.worker is None:
             raise ValueError("Worker name must be set before iterating.")
 
+    def set_metadata(self, key: str, value: t.Any):
+        """Set a metadata key-value pair."""
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            """
+            )
+            cursor.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                (key, str(value)),
+            )
+            conn.commit()
+
+    def get_metadata(self, key: str) -> Optional[str]:
+        """Get a metadata value by key."""
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT value FROM metadata WHERE key = ?", (key,))
+                row = cursor.fetchone()
+                return row[0] if row else None
+            except sqlite3.OperationalError as e:
+                if "no such table" in str(e):
+                    return None
+                raise
+
+    def set_worker(self, worker_name: str):
+        """Set the worker name and reset worker checking state."""
+        self.worker = worker_name
+        self._worker_checked = False
+
     def __len__(self):
         with self.connect() as conn:
             cursor = conn.cursor()
@@ -48,7 +86,7 @@ class LaufbandDB:
             count = cursor.fetchone()[0]
         return count
 
-    def __iter__(self) -> Iterator[int]:
+    def __iter__(self) -> Iterator[str]:
         """Iterate over the progress table, yielding job IDs.
 
         This will check if the worker is already registered and update the worker state.
@@ -108,28 +146,22 @@ class LaufbandDB:
             (f"-{self.heartbeat_timeout} seconds",),
         )
 
-    def __next__(self) -> int:
+    def __next__(self) -> str:
+        """Get next available task ID for sequential processing."""
         with self.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
                 UPDATE progress_table
                 SET state = 'running', worker = ?, count = count + 1
-                WHERE id = (
-                    SELECT id
+                WHERE task_id = (
+                    SELECT task_id
                     FROM progress_table
-                    WHERE
-                        (
-                            state = 'pending'
-                        )
-                        OR
-                        (
-                            state = 'died' AND count - 1 < ?
-                        )
-                    ORDER BY id
+                    WHERE (state IS NULL OR (state = 'died' AND count - 1 < ?))
+                    ORDER BY task_id
                     LIMIT 1
                 )
-                RETURNING id
+                RETURNING task_id
                 """,
                 (self.worker, self.max_died_retries),
             )
@@ -141,9 +173,56 @@ class LaufbandDB:
             conn.commit()
 
             if row:
-                return row[0] - 1  # Adjust for 0-based index
+                return row[0]
             else:
                 raise StopIteration
+
+    def get_ready_task(self, graph, hash_fn: t.Callable[[t.Any], str]) -> Iterator[str]:
+        """Get next ready task that has all dependencies completed."""
+        with self.connect() as conn:
+            cursor = conn.cursor()
+
+            # Get all completed tasks and map them back to original nodes
+            cursor.execute(
+                "SELECT task_id FROM progress_table WHERE state = 'completed'"
+            )
+            completed_task_ids = {row[0] for row in cursor.fetchall()}
+
+            # Process GraphTraversalProtocol
+            for node, predecessors in graph:
+                task_id = hash_fn(node)
+                predecessor_task_ids = {hash_fn(pred) for pred in predecessors}
+
+                if not predecessors or predecessor_task_ids.issubset(
+                    completed_task_ids
+                ):
+                    # Try to claim this task
+                    cursor.execute(
+                        """
+                        UPDATE progress_table
+                        SET state = 'running', worker = ?, count = count + 1
+                        WHERE task_id = ? AND
+                        (
+                            state = 'pending'
+                            OR
+                            (state = 'died' AND count - 1 < ?)
+                        )
+                        RETURNING task_id
+                        """,
+                        (self.worker, task_id, self.max_died_retries),
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        self.update_worker(cursor)
+                        self.mark_died(cursor)
+                        conn.commit()
+                        yield row[0]
+                        return
+
+            self.update_worker(cursor)
+            self.mark_died(cursor)
+            conn.commit()
+            return
 
     @contextlib.contextmanager
     def connect(self):
@@ -153,25 +232,29 @@ class LaufbandDB:
         finally:
             conn.close()
 
-    def create(self, size: int):
+    def create_empty(self):
+        """Create empty database with tables."""
         with self.connect() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 CREATE TABLE progress_table (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT PRIMARY KEY,
                     state TEXT DEFAULT 'pending',
                     worker TEXT,
                     count INTEGER DEFAULT 0
                 )
             """)
-            for _ in range(size):
-                cursor.execute(
-                    """
-                    INSERT INTO progress_table (state, worker)
-                    VALUES (?, ?)
-                    """,
-                    ("pending", None),
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS dependencies (
+                    task_id TEXT,
+                    predecessor_id TEXT,
+                    PRIMARY KEY (task_id, predecessor_id),
+                    FOREIGN KEY (task_id) REFERENCES progress_table (task_id),
+                    FOREIGN KEY (predecessor_id) REFERENCES progress_table (task_id)
                 )
+            """)
+
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS worker_table (
                     worker TEXT PRIMARY KEY,
@@ -180,41 +263,56 @@ class LaufbandDB:
             """)
             conn.commit()
 
-    def finalize(self, idx: int, state: T_STATE = "completed"):
+    def add_task(self, task_id: str, predecessor_ids: set[str]):
+        """Add a single task with its dependencies."""
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            # Only add dependencies - don't add to progress_table until task is claimed
+            for predecessor_id in predecessor_ids:
+                cursor.execute(
+                    """
+                    INSERT OR IGNORE INTO dependencies (task_id, predecessor_id)
+                    VALUES (?, ?)
+                    """,
+                    (task_id, predecessor_id),
+                )
+            conn.commit()
+
+    def finalize(self, task_id: str, state: T_STATE = "completed"):
         with self.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
                 UPDATE progress_table
                 SET state = ?
-                WHERE id = ?
+                WHERE task_id = ?
                 """,
-                (state, idx + 1),  # Adjust for 0-based index
+                (state, task_id),
             )
             conn.commit()
 
-    def list_state(self, state: T_STATE) -> list[int]:
+    def list_state(self, state: T_STATE) -> list[str]:
         with self.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT id FROM progress_table
+                SELECT task_id FROM progress_table
                 WHERE state = ?
                 """,
                 (state,),
             )
             rows = cursor.fetchall()
-        return [row[0] - 1 for row in rows]
+        return [row[0] for row in rows]
 
-    def get_worker(self, idx: int) -> Optional[str]:
+    def get_worker(self, task_id: str) -> Optional[str]:
         with self.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
                 SELECT worker FROM progress_table
-                WHERE id = ?
+                WHERE task_id = ?
                 """,
-                (idx + 1,),  # Adjust for 0-based index
+                (task_id,),
             )
             row = cursor.fetchone()
         return row[0] if row else None
@@ -222,14 +320,20 @@ class LaufbandDB:
     def get_job_stats(self) -> dict[str, int]:
         """Get counts of jobs in each state"""
         stats = {}
-        states: list[T_STATE] = ["running", "pending", "failed", "completed", "died"]
+        states: list[str] = ["running", "failed", "completed", "died", "pending"]
 
         with self.connect() as conn:
             cursor = conn.cursor()
             for state in states:
-                cursor.execute(
-                    "SELECT COUNT(*) FROM progress_table WHERE state = ?", (state,)
-                )
+                if state == "pending":
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM progress_table "
+                        "WHERE state = 'pending' OR state IS NULL"
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM progress_table WHERE state = ?", (state,)
+                    )
                 stats[state] = cursor.fetchone()[0]
 
         return stats
@@ -275,3 +379,72 @@ class LaufbandDB:
                 )
 
         return workers
+
+    def claim_task(self, task_id: str) -> str | None:
+        """Claim a task by setting it as running for this worker.
+
+        Returns the task_id if successfully claimed, None otherwise.
+        """
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO progress_table (task_id, state, worker, count)
+                VALUES (?, 'running', ?, 1)
+                RETURNING task_id
+                """,
+                (task_id, self.worker),
+            )
+            row = cursor.fetchone()
+            if row:
+                self.update_worker(cursor)
+                conn.commit()
+                return row[0]
+            return None
+
+    def find_ready_died_task(self) -> str | None:
+        """Find a died task that has all dependencies completed and can be retried."""
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            # Find tasks that are died and have all dependencies completed
+            cursor.execute(
+                """
+                SELECT pt.task_id
+                FROM progress_table pt
+                WHERE pt.state = 'died' AND pt.count - 1 < ?
+                AND NOT EXISTS (
+                    SELECT 1 FROM dependencies d
+                    JOIN progress_table dep_pt ON d.predecessor_id = dep_pt.task_id
+                    WHERE d.task_id = pt.task_id AND dep_pt.state != 'completed'
+                )
+                LIMIT 1
+                """,
+                (self.max_died_retries,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return row[0]
+            return None
+
+    def claim_died_task(self, task_id: str) -> str | None:
+        """Try to claim a died task by updating it to running state.
+
+        Returns the task_id if successfully claimed, None otherwise.
+        """
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE progress_table
+                SET state = 'running', worker = ?, count = count + 1
+                WHERE task_id = ? AND state = 'died' AND count - 1 < ?
+                RETURNING task_id
+                """,
+                (self.worker, task_id, self.max_died_retries),
+            )
+            row = cursor.fetchone()
+            if row:
+                self.update_worker(cursor)
+                conn.commit()
+                return row[0]
+            return None
