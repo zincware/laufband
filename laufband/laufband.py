@@ -109,7 +109,9 @@ class Laufband(t.Generic[_T]):
         class LazyGraphProtocol:
             def __init__(self, parent):
                 self.parent = parent
-                # TODO: add `__len__` if available
+
+            def __len__(self):
+                return len(self.parent._data_source)
 
             def __iter__(self):
                 # Lazy evaluation - create mapping only when iteration is requested

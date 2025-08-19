@@ -221,104 +221,104 @@ class Graphband(t.Generic[_T]):
             yield from tqdm((node for node, _ in self.graph_fn), **self.tqdm_kwargs)
             return
 
-        # Store node mapping and graph structure during database initialization to avoid re-consuming generator
-        node_mapping = {}
-        graph_data = []
+        # Initialize lazy consumption state
+        node_mapping = {}  # task_id -> node object
+        graph_iterator = iter(self.graph_fn)
+        graph_exhausted = False
+        tbar = None  # Will be initialized once we know total tasks
         
         with self.lock:
-            # Initialize database with the graph protocol
+            # Initialize database if it doesn't exist
             if not self.com.exists():
-                # Consume the generator once and store all data
-                for node, predecessors in self.graph_fn:
-                    task_id = self.hash_fn(node)
-                    node_mapping[task_id] = node
-                    graph_data.append((node, predecessors))
-                
-                # Create a new generator for database creation that uses our stored data
-                def stored_graph():
-                    for node, predecessors in graph_data:
-                        yield (node, predecessors)
-                
-                self.db.create_from_graph(stored_graph(), self.hash_fn)
-            else:
-                # For update case, consume generator and store nodes
-                for node, predecessors in self.graph_fn:
-                    task_id = self.hash_fn(node)
-                    node_mapping[task_id] = node
-                    graph_data.append((node, predecessors))
-                
-                def stored_graph():
-                    for node, predecessors in graph_data:
-                        yield (node, predecessors)
-                
-                self.db.update_from_graph(stored_graph(), self.hash_fn)
-
-        # Get initial task count for progress bar
-        # Check if the protocol supports __len__ for efficient counting
-        with self.lock:
-            try:
-                total_tasks = len(self.graph_fn)
-            except TypeError:
-                # Protocol doesn't support __len__, use database count or node_mapping count
-                total_tasks = len(node_mapping) if node_mapping else len(self.db)
-
-        tbar = tqdm(total=total_tasks, **self.tqdm_kwargs)
+                self.db.create_empty()
 
         while True:
+            task_id = None
+            
             with self.lock:
-                completed = self.db.list_state("completed")
-
+                # Check for stop conditions
                 if self.failure_policy == "stop" and self.db.list_state("failed"):
                     raise RuntimeError(
                         "Another worker has failed. "
                         "Stopping due to failure_policy='stop'."
                     )
 
-                # Get ready task using dependency-aware logic with stored graph data
-                task_id = None
+                # Try to find a ready task from what we already know
+                task_id = self._find_ready_task()
                 
-                # Get all completed tasks
-                completed_task_ids = set(self.db.list_state("completed"))
-                
-                # Find a ready task from our stored graph data
-                for node, predecessors in graph_data:
-                    candidate_task_id = self.hash_fn(node)
-                    predecessor_task_ids = {self.hash_fn(pred) for pred in predecessors}
-                    
-                    # Check if this task is ready (no predecessors or all predecessors completed)
-                    if not predecessors or predecessor_task_ids.issubset(completed_task_ids):
-                        # Try to claim this task
-                        with self.db.connect() as conn:
-                            cursor = conn.cursor()
-                            cursor.execute(
-                                """
-                                UPDATE progress_table
-                                SET state = 'running', worker = ?, count = count + 1
-                                WHERE task_id = ? AND
-                                (
-                                    state = 'pending'
-                                    OR
-                                    (state = 'died' AND count - 1 < ?)
+                # If no ready task found and generator not exhausted, consume more
+                while task_id is None and not graph_exhausted:
+                    try:
+                        node, predecessors = next(graph_iterator)
+                        candidate_task_id = self.hash_fn(node)
+                        node_mapping[candidate_task_id] = node
+                        
+                        # Add this node to database
+                        predecessor_task_ids = {
+                            self.hash_fn(pred) for pred in predecessors
+                        }
+                        self.db.add_task(candidate_task_id, predecessor_task_ids)
+                        
+                        # Check if this new task is ready (all dependencies satisfied)
+                        completed_task_ids = set(self.db.list_state("completed"))
+                        if not predecessors or predecessor_task_ids.issubset(
+                            completed_task_ids
+                        ):
+                            # Try to claim this task immediately
+                            with self.db.connect() as conn:
+                                cursor = conn.cursor()
+                                cursor.execute(
+                                    """
+                                    UPDATE progress_table
+                                    SET state = 'running', worker = ?, count = count + 1
+                                    WHERE task_id = ? AND
+                                    (
+                                        state = 'pending'
+                                        OR
+                                        (state = 'died' AND count - 1 < ?)
+                                    )
+                                    RETURNING task_id
+                                    """,
+                                    (
+                                        self.db.worker,
+                                        candidate_task_id,
+                                        self.db.max_died_retries,
+                                    ),
                                 )
-                                RETURNING task_id
-                                """,
-                                (self.db.worker, candidate_task_id, self.db.max_died_retries),
-                            )
-                            row = cursor.fetchone()
-                            if row:
-                                conn.commit()
-                                task_id = row[0]
-                                break
+                                row = cursor.fetchone()
+                                if row:
+                                    conn.commit()
+                                    task_id = row[0]
+                                    break
+                        
+                        # If not ready, try to find another ready task
+                        task_id = self._find_ready_task()
+                        
+                    except StopIteration:
+                        graph_exhausted = True
+                        break
                 
+                # If still no task and generator exhausted, we're done
                 if task_id is None:
-                    # No more ready tasks
                     break
 
-            # Update progress bar for completed items
+            # Initialize progress bar if not done yet
+            if tbar is None:
+                try:
+                    total_tasks = len(self.graph_fn)  # type: ignore
+                except (TypeError, AttributeError):
+                    total_tasks = None  # Unknown total, will update dynamically
+                tbar = tqdm(total=total_tasks, **self.tqdm_kwargs)
+
+            # Update progress bar
+            completed = self.db.list_state("completed")
+            if tbar.total is None:
+                # Update total dynamically as we discover tasks
+                tbar.total = len(self.db)
             tbar.n = len(completed)
             tbar.refresh()
 
-            # Get the actual task object from our stored mapping
+            # Get the actual task object
             task_item = node_mapping.get(task_id)
             if task_item is None:
                 # This shouldn't happen, but handle gracefully
@@ -333,18 +333,69 @@ class Graphband(t.Generic[_T]):
                     self.db.finalize(task_id, "failed")
                 raise
 
-            tbar.update(1)
+            if tbar:
+                tbar.update(1)
 
             with self.lock:
                 # After processing, mark as completed
                 self.db.finalize(task_id, "completed")
+                
+                # Check if we're done (only when graph is exhausted)
                 completed = self.db.list_state("completed")
                 total_tasks = len(self.db)
-                if len(completed) == total_tasks:
+                if len(completed) == total_tasks and graph_exhausted:
                     if self.cleanup:
                         self.com.unlink()
+                    if tbar:
+                        tbar.close()
                     return
 
             if self._close_trigger:
                 self._close_trigger = False
                 break
+
+        if tbar:
+            tbar.close()
+    
+    def _find_ready_task(self) -> str | None:
+        """Find a ready task from existing database entries."""
+        with self.db.connect() as conn:
+            cursor = conn.cursor()
+            # Find tasks that are pending/died and have all dependencies completed
+            cursor.execute(
+                """
+                SELECT pt.task_id
+                FROM progress_table pt
+                WHERE (pt.state = 'pending' OR (pt.state = 'died' AND pt.count - 1 < ?))
+                AND NOT EXISTS (
+                    SELECT 1 FROM dependencies d 
+                    JOIN progress_table dep_pt ON d.predecessor_id = dep_pt.task_id
+                    WHERE d.task_id = pt.task_id AND dep_pt.state != 'completed'
+                )
+                LIMIT 1
+                """,
+                (self.db.max_died_retries,),
+            )
+            row = cursor.fetchone()
+            if row:
+                task_id = row[0]
+                # Try to claim it
+                cursor.execute(
+                    """
+                    UPDATE progress_table
+                    SET state = 'running', worker = ?, count = count + 1
+                    WHERE task_id = ? AND
+                    (
+                        state = 'pending'
+                        OR
+                        (state = 'died' AND count - 1 < ?)
+                    )
+                    RETURNING task_id
+                    """,
+                    (self.db.worker, task_id, self.db.max_died_retries),
+                )
+                claimed_row = cursor.fetchone()
+                if claimed_row:
+                    conn.commit()
+                    return claimed_row[0]
+        return None

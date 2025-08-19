@@ -216,6 +216,60 @@ class GraphbandDB:
 
         self.create_from_graph(simple_protocol(), str)
 
+    def create_empty(self):
+        """Create empty database with tables."""
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE progress_table (
+                    task_id TEXT PRIMARY KEY,
+                    state TEXT DEFAULT 'pending',
+                    worker TEXT,
+                    count INTEGER DEFAULT 0
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS dependencies (
+                    task_id TEXT,
+                    predecessor_id TEXT,
+                    PRIMARY KEY (task_id, predecessor_id),
+                    FOREIGN KEY (task_id) REFERENCES progress_table (task_id),
+                    FOREIGN KEY (predecessor_id) REFERENCES progress_table (task_id)
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS worker_table (
+                    worker TEXT PRIMARY KEY,
+                    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+    
+    def add_task(self, task_id: str, predecessor_ids: set[str]):
+        """Add a single task with its dependencies."""
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO progress_table (task_id, state, worker)
+                VALUES (?, ?, ?)
+                """,
+                (task_id, "pending", None),
+            )
+            
+            # Add dependencies
+            for predecessor_id in predecessor_ids:
+                cursor.execute(
+                    """
+                    INSERT OR IGNORE INTO dependencies (task_id, predecessor_id)
+                    VALUES (?, ?)
+                    """,
+                    (task_id, predecessor_id),
+                )
+            conn.commit()
+
     def create_from_graph(self, graph, hash_fn: t.Callable[[t.Any], str]):
         """Create database from a GraphTraversalProtocol."""
         with self.connect() as conn:
@@ -228,9 +282,19 @@ class GraphbandDB:
                     count INTEGER DEFAULT 0
                 )
             """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS dependencies (
+                    task_id TEXT,
+                    predecessor_id TEXT,
+                    PRIMARY KEY (task_id, predecessor_id),
+                    FOREIGN KEY (task_id) REFERENCES progress_table (task_id),
+                    FOREIGN KEY (predecessor_id) REFERENCES progress_table (task_id)
+                )
+            """)
 
             # Process GraphTraversalProtocol
-            for node, _ in graph:
+            for node, predecessors in graph:
                 task_id = hash_fn(node)
                 cursor.execute(
                     """
@@ -239,6 +303,17 @@ class GraphbandDB:
                     """,
                     (task_id, "pending", None),
                 )
+                
+                # Add dependencies
+                for predecessor in predecessors:
+                    predecessor_id = hash_fn(predecessor)
+                    cursor.execute(
+                        """
+                        INSERT OR IGNORE INTO dependencies (task_id, predecessor_id)
+                        VALUES (?, ?)
+                        """,
+                        (task_id, predecessor_id),
+                    )
 
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS worker_table (
@@ -267,6 +342,15 @@ class GraphbandDB:
                     )
                 """)
                 cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS dependencies (
+                        task_id TEXT,
+                        predecessor_id TEXT,
+                        PRIMARY KEY (task_id, predecessor_id),
+                        FOREIGN KEY (task_id) REFERENCES progress_table (task_id),
+                        FOREIGN KEY (predecessor_id) REFERENCES progress_table (task_id)
+                    )
+                """)
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS worker_table (
                         worker TEXT PRIMARY KEY,
                         last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -274,7 +358,7 @@ class GraphbandDB:
                 """)
 
             # Process GraphTraversalProtocol
-            for node, _ in graph:
+            for node, predecessors in graph:
                 task_id = hash_fn(node)
                 cursor.execute(
                     """
@@ -283,6 +367,17 @@ class GraphbandDB:
                     """,
                     (task_id, "pending", None),
                 )
+                
+                # Add dependencies
+                for predecessor in predecessors:
+                    predecessor_id = hash_fn(predecessor)
+                    cursor.execute(
+                        """
+                        INSERT OR IGNORE INTO dependencies (task_id, predecessor_id)
+                        VALUES (?, ?)
+                        """,
+                        (task_id, predecessor_id),
+                    )
             conn.commit()
 
     def finalize(self, task_id: str, state: T_STATE = "completed"):
