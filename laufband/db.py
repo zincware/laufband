@@ -3,6 +3,7 @@ import os
 import sqlite3
 import threading
 import typing as t
+from contextlib import nullcontext
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +35,9 @@ class GraphbandDB:
         Interval in seconds between heartbeat updates. Defaults to 10.0 seconds.
     max_died_retries : int
         Number of retries for jobs that are marked as 'died'.
+    lock : Any
+        Optional file lock for coordinating database access across processes.
+        If provided, will be used to protect database operations.
     _worker_checked : bool
         Internal flag to check if the worker has been registered.
     """
@@ -43,6 +47,7 @@ class GraphbandDB:
     heartbeat_timeout: int = 30
     heartbeat_interval: float = 10.0
     max_died_retries: int = 0
+    lock: t.Any = field(default=None)
     _worker_checked: bool = field(default=False, init=False)
     _heartbeat_thread: threading.Thread | None = field(default=None, init=False)
     _heartbeat_stop_event: threading.Event = field(
@@ -54,18 +59,27 @@ class GraphbandDB:
         if self.worker is None:
             raise ValueError("Worker name must be set before iterating.")
 
+    def _safe_db_operation(self, operation):
+        """Execute database operation with optional file lock protection."""
+        lock_context = self.lock if self.lock is not None else nullcontext()
+        with lock_context:
+            return operation()
+
     def _heartbeat_loop(self):
         """Background thread updating worker heartbeat and marking died workers."""
         while not self._heartbeat_stop_event.wait(timeout=self.heartbeat_interval):
-            try:
-                with self.connect() as conn:
-                    cursor = conn.cursor()
-                    self.update_worker(cursor)
-                    self.mark_died(cursor)
-                    conn.commit()
-            except Exception:
-                # Continue running even if heartbeat update fails
-                pass
+            def heartbeat_operation():
+                try:
+                    with self.connect() as conn:
+                        cursor = conn.cursor()
+                        self.update_worker(cursor)
+                        self.mark_died(cursor)
+                        conn.commit()
+                except Exception:
+                    # Continue running even if heartbeat update fails
+                    pass
+            
+            self._safe_db_operation(heartbeat_operation)
 
     def start_heartbeat(self):
         """Start the background heartbeat thread."""
@@ -227,8 +241,7 @@ class GraphbandDB:
     def get_ready_task(self, graph, hash_fn: t.Callable[[t.Any], str]) -> Iterator[str]:
         """Get next ready task that has all dependencies completed."""
         # Ensure heartbeat thread is running
-        if not self._heartbeat_active:
-            self.start_heartbeat()
+        self.start_heartbeat()
 
         with self.connect() as conn:
             cursor = conn.cursor()
@@ -435,8 +448,7 @@ class GraphbandDB:
         Returns the task_id if successfully claimed, None otherwise.
         """
         # Ensure heartbeat thread is running
-        if not self._heartbeat_active:
-            self.start_heartbeat()
+        self.start_heartbeat()
 
         with self.connect() as conn:
             cursor = conn.cursor()

@@ -157,6 +157,7 @@ class Graphband(t.Generic[_T]):
                 heartbeat_timeout=heartbeat_timeout,
                 heartbeat_interval=heartbeat_interval,
                 max_died_retries=max_died_retries,
+                lock=self.lock,
             )
         else:
             self.db = GraphbandDB(
@@ -165,6 +166,7 @@ class Graphband(t.Generic[_T]):
                 heartbeat_timeout=heartbeat_timeout,
                 heartbeat_interval=heartbeat_interval,
                 max_died_retries=max_died_retries,
+                lock=self.lock,
             )
         self.cleanup = cleanup
         self.tqdm_kwargs = tqdm_kwargs or {}

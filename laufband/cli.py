@@ -25,8 +25,8 @@ class LaufbandStatusDisplay:
     def __init__(
         self,
         db_path: str | Path,
-        heartbeat_timeout: int | None = None,
-        heartbeat_interval: float | None = None,
+        heartbeat_timeout: int,
+        heartbeat_interval: float,
     ):
         self.db_path = Path(db_path)
         self.console = Console()
@@ -40,8 +40,8 @@ class LaufbandStatusDisplay:
             self.db = GraphbandDB(
                 self.db_path,
                 worker="cli_viewer",
-                heartbeat_timeout=self.heartbeat_timeout or 30,
-                heartbeat_interval=self.heartbeat_interval or 10.0,
+                heartbeat_timeout=self.heartbeat_timeout,
+                heartbeat_interval=self.heartbeat_interval,
             )
 
     def get_job_stats(self) -> Dict[str, int] | None:
@@ -237,11 +237,13 @@ def main() -> None:
         "--heartbeat-timeout",
         type=int,
         help="Override heartbeat timeout in seconds for determining worker activity",
+        default=30,
     )
     parser.add_argument(
         "--heartbeat-interval",
         type=float,
         help="Override heartbeat interval in seconds for the CLI viewer worker",
+        default=10.0,
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
