@@ -229,7 +229,7 @@ class GraphbandDB:
         # Ensure heartbeat thread is running
         if not self._heartbeat_active:
             self.start_heartbeat()
-            
+
         with self.connect() as conn:
             cursor = conn.cursor()
 
@@ -437,7 +437,7 @@ class GraphbandDB:
         # Ensure heartbeat thread is running
         if not self._heartbeat_active:
             self.start_heartbeat()
-            
+
         with self.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(

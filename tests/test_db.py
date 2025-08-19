@@ -490,20 +490,17 @@ def worker_process(db_path: Path, worker_id: str, ready_event: multiprocessing.E
     try:
         # Create worker with fast heartbeat for testing (0.5s interval, 2s timeout)
         worker = GraphbandDB(
-            db_path, 
-            worker=worker_id, 
-            heartbeat_timeout=2,
-            heartbeat_interval=0.5
+            db_path, worker=worker_id, heartbeat_timeout=2, heartbeat_interval=0.5
         )
-        
+
         # Claim a task
         result = worker.claim_task("test_task_multiprocess")
         if result != "test_task_multiprocess":
             return
-        
+
         # Signal that we're ready and have claimed the task
         ready_event.set()
-        
+
         # Sleep indefinitely until killed
         while True:
             time.sleep(1)
@@ -519,32 +516,28 @@ def worker_process(db_path: Path, worker_id: str, ready_event: multiprocessing.E
 def test_multiprocess_worker_death_detection(tmp_path: Path):
     """Test that a killed worker process has its jobs marked as died."""
     db_path = tmp_path / "test_multiprocess_death.db"
-    
+
     # Set up the main worker to create the database with fast heartbeat for testing
     main_worker = GraphbandDB(
-        db_path, 
-        worker="main_worker", 
-        heartbeat_timeout=2,
-        heartbeat_interval=0.5
+        db_path, worker="main_worker", heartbeat_timeout=2, heartbeat_interval=0.5
     )
     main_worker.create_empty()
-    
+
     # Don't add the task to the database beforehand - let claim_task create it
-    
+
     # Create event for synchronization
     ready_event = multiprocessing.Event()
-    
+
     # Start worker process
     process = multiprocessing.Process(
-        target=worker_process,
-        args=(db_path, "subprocess_worker", ready_event)
+        target=worker_process, args=(db_path, "subprocess_worker", ready_event)
     )
     process.start()
-    
+
     try:
         # Wait for worker to claim the task (with timeout)
         assert ready_event.wait(timeout=10), "Worker process didn't claim task in time"
-        
+
         # Verify the task is running
         with main_worker.connect() as conn:
             cursor = conn.cursor()
@@ -556,36 +549,36 @@ def test_multiprocess_worker_death_detection(tmp_path: Path):
             assert row is not None
             assert row[0] == "running"
             assert row[1] == "subprocess_worker"
-        
+
         # Kill the worker process abruptly
         process.terminate()
         process.join(timeout=5)
-        
+
         # If terminate didn't work, force kill
         if process.is_alive():
             process.kill()
             process.join()
-        
+
         # Wait for the background heartbeat system to detect the dead worker
         # The heartbeat runs every 0.5 seconds and timeout is 2 seconds
         # So we need to wait at most 3 seconds for detection
         time.sleep(3.5)
-        
+
         # Check if another worker (or the heartbeat system) marked the task as died
         # We'll create a new worker to trigger the mark_died check
         checker_worker = GraphbandDB(
-            db_path, 
-            worker="checker_worker", 
+            db_path,
+            worker="checker_worker",
             heartbeat_timeout=2,
-            heartbeat_interval=0.5
+            heartbeat_interval=0.5,
         )
-        
+
         # Manually trigger mark_died to simulate what the heartbeat thread does
         with checker_worker.connect() as conn:
             cursor = conn.cursor()
             checker_worker.mark_died(cursor)
             conn.commit()
-        
+
         # Verify the task is now marked as died
         with main_worker.connect() as conn:
             cursor = conn.cursor()
@@ -596,11 +589,11 @@ def test_multiprocess_worker_death_detection(tmp_path: Path):
             row = cursor.fetchone()
             assert row is not None
             assert row[0] == "died", f"Expected task to be 'died' but got '{row[0]}'"
-            
+
         # Cleanup heartbeat threads
         main_worker.stop_heartbeat()
         checker_worker.stop_heartbeat()
-        
+
     finally:
         # Make sure process is cleaned up
         if process.is_alive():

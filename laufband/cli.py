@@ -23,10 +23,10 @@ from laufband.db import GraphbandDB
 
 class LaufbandStatusDisplay:
     def __init__(
-        self, 
-        db_path: str | Path, 
-        heartbeat_timeout: int | None = None, 
-        heartbeat_interval: float | None = None
+        self,
+        db_path: str | Path,
+        heartbeat_timeout: int | None = None,
+        heartbeat_interval: float | None = None,
     ):
         self.db_path = Path(db_path)
         self.console = Console()
@@ -38,10 +38,10 @@ class LaufbandStatusDisplay:
         """Ensure database connection exists, create if needed"""
         if self.db is None and self.db_path.exists():
             self.db = GraphbandDB(
-                self.db_path, 
+                self.db_path,
                 worker="cli_viewer",
                 heartbeat_timeout=self.heartbeat_timeout or 30,
-                heartbeat_interval=self.heartbeat_interval or 10.0
+                heartbeat_interval=self.heartbeat_interval or 10.0,
             )
 
     def get_job_stats(self) -> Dict[str, int] | None:
@@ -149,7 +149,7 @@ class LaufbandStatusDisplay:
                 # SQLite CURRENT_TIMESTAMP format: '2024-01-01 12:00:00'
                 last_seen_str = worker["last_seen"]
                 active_jobs = worker["active_jobs"]
-                
+
                 if last_seen_str:
                     # Parse SQLite timestamp format
                     last_seen = datetime.datetime.strptime(
@@ -159,10 +159,10 @@ class LaufbandStatusDisplay:
                     last_seen = last_seen.replace(tzinfo=datetime.timezone.utc)
                     now = datetime.datetime.now(datetime.timezone.utc)
                     time_diff = (now - last_seen).total_seconds()
-                    
+
                     # Use the database's configured heartbeat timeout
                     heartbeat_timeout = self.db.heartbeat_timeout if self.db else 30
-                    
+
                     if time_diff >= heartbeat_timeout:
                         status = "offline"
                         status_color = "red"
@@ -213,8 +213,7 @@ class LaufbandStatusDisplay:
 
         # Give stats 1/3 and workers 2/3 of the width
         layout["tables"].split_row(
-            Layout(name="stats", ratio=1), 
-            Layout(name="workers", ratio=2)
+            Layout(name="stats", ratio=1), Layout(name="workers", ratio=2)
         )
 
         # Add content
@@ -277,9 +276,9 @@ def main() -> None:
     db_path = getattr(args, "db", None) or "laufband.sqlite"
 
     display = LaufbandStatusDisplay(
-        db_path, 
+        db_path,
         heartbeat_timeout=args.heartbeat_timeout,
-        heartbeat_interval=args.heartbeat_interval
+        heartbeat_interval=args.heartbeat_interval,
     )
 
     if args.command == "status":
@@ -306,8 +305,8 @@ def main() -> None:
 
                         # Give stats 1/3 and workers 2/3 of the width
                         layout["tables"].split_row(
-                            Layout(name="stats", ratio=1), 
-                            Layout(name="workers", ratio=2)
+                            Layout(name="stats", ratio=1),
+                            Layout(name="workers", ratio=2),
                         )
 
                         # Add content
