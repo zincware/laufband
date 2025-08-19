@@ -285,26 +285,29 @@ def test_worker_registration_on_task_claim(tmp_path: Path):
     db_path = tmp_path / "test_worker_registration.db"
     worker = GraphbandDB(db_path, worker="claim_test_worker")
     worker.create_empty()
-    
+
     # Initially, worker_table should be empty
     with worker.connect() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM worker_table")
         assert cursor.fetchone()[0] == 0
-    
+
     # Use claim_task method
     result = worker.claim_task("test_task_1")
     assert result == "test_task_1"
-    
+
     # Worker should now be registered in worker_table
     with worker.connect() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT worker, last_seen FROM worker_table WHERE worker = ?", (worker.worker,))
+        cursor.execute(
+            "SELECT worker, last_seen FROM worker_table WHERE worker = ?",
+            (worker.worker,),
+        )
         row = cursor.fetchone()
         assert row is not None
         assert row[0] == "claim_test_worker"
         assert row[1] is not None  # last_seen timestamp should be set
-    
+
     # get_worker_info should now find the worker
     worker_info = worker.get_worker_info()
     assert len(worker_info) == 1
@@ -318,47 +321,50 @@ def test_worker_registration_on_graph_task_claim(tmp_path: Path):
     db_path = tmp_path / "test_graph_worker_registration.db"
     worker = GraphbandDB(db_path, worker="graph_test_worker")
     worker.create_empty()
-    
+
     # Add a task that can be claimed
     worker.add_task("graph_task_1", set())
-    
+
     # Simulate claiming a task through get_ready_task (similar to graphband usage)
     # First, we need to add the task to progress_table as pending
     with worker.connect() as conn:
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO progress_table (task_id, state) VALUES (?, 'pending')",
-            ("graph_task_1",)
+            ("graph_task_1",),
         )
         conn.commit()
-    
+
     # Initially, worker_table should be empty
     with worker.connect() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM worker_table")
         assert cursor.fetchone()[0] == 0
-    
+
     # Simulate a simple graph with one ready task
     def simple_graph():
         yield ("task_node", [])  # No dependencies
-    
+
     def hash_fn(node):
         return "graph_task_1"  # Maps to our pending task
-    
+
     # Use get_ready_task method
     tasks = list(worker.get_ready_task(simple_graph(), hash_fn))
     assert len(tasks) == 1
     assert tasks[0] == "graph_task_1"
-    
+
     # Worker should now be registered in worker_table
     with worker.connect() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT worker, last_seen FROM worker_table WHERE worker = ?", (worker.worker,))
+        cursor.execute(
+            "SELECT worker, last_seen FROM worker_table WHERE worker = ?",
+            (worker.worker,),
+        )
         row = cursor.fetchone()
         assert row is not None
         assert row[0] == "graph_test_worker"
         assert row[1] is not None  # last_seen timestamp should be set
-    
+
     # get_worker_info should now find the worker
     worker_info = worker.get_worker_info()
     assert len(worker_info) == 1

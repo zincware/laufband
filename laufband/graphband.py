@@ -34,6 +34,7 @@ class GraphTraversalProtocol(t.Protocol):
     def __len__(self) -> int:
         raise TypeError(f"{type(self).__name__} does not implement __len__")
 
+
 def _check_disabled(func: t.Callable) -> t.Callable:
     """Decorator to raise an error if Graphband is disabled."""
 
@@ -257,9 +258,7 @@ class Graphband(t.Generic[_T]):
                     (
                         claimed_task_id,
                         exhausted,
-                    ) = self._process_next_task_from_graph(
-                        graph_iterator, node_mapping
-                    )
+                    ) = self._process_next_task_from_graph(graph_iterator, node_mapping)
                     graph_exhausted = exhausted
                     if exhausted:
                         break

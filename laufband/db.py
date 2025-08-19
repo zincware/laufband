@@ -523,7 +523,7 @@ class GraphbandDB:
 
     def claim_task(self, task_id: str) -> str | None:
         """Claim a task by setting it as running for this worker.
-        
+
         Returns the task_id if successfully claimed, None otherwise.
         """
         with self.connect() as conn:
@@ -569,7 +569,7 @@ class GraphbandDB:
 
     def claim_died_task(self, task_id: str) -> str | None:
         """Try to claim a died task by updating it to running state.
-        
+
         Returns the task_id if successfully claimed, None otherwise.
         """
         with self.connect() as conn:
