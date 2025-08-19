@@ -87,7 +87,8 @@ def test_laufband_length_with_custom_iterable_no_len(tmp_path):
 
     laufband = Laufband(data, com=db_path, cleanup=False)
 
-    # Should raise TypeError when trying to get length from custom iterable without __len__
+    # Should raise TypeError when trying to get length from custom iterable
+    # without __len__
     with pytest.raises(TypeError):
         len(laufband)
 
@@ -98,7 +99,8 @@ def test_laufband_length_with_custom_iterable_no_len(tmp_path):
 
 
 def test_laufband_length_with_custom_iterable_with_len(tmp_path):
-    """Test that Laufband with a custom iterable with __len__ supports len() operation."""
+    """Test that Laufband with a custom iterable with __len__ supports
+    len() operation."""
 
     class CustomIterableWithLen:
         """Custom iterable with __len__ method."""

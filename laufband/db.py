@@ -359,9 +359,10 @@ class GraphbandDB:
         with self.connect() as conn:
             cursor = conn.cursor()
             # Check if progress_table exists, create if it doesn't
-            cursor.execute("""
-                SELECT name FROM sqlite_master WHERE type='table' AND name='progress_table'
-            """)
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name='progress_table'"
+            )
             if not cursor.fetchone():
                 # Table doesn't exist, create it
                 cursor.execute("""
@@ -469,7 +470,8 @@ class GraphbandDB:
             for state in states:
                 if state == "pending":
                     cursor.execute(
-                        "SELECT COUNT(*) FROM progress_table WHERE state = 'pending' OR state IS NULL"
+                        "SELECT COUNT(*) FROM progress_table "
+                        "WHERE state = 'pending' OR state IS NULL"
                     )
                 else:
                     cursor.execute(

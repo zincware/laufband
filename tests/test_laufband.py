@@ -432,7 +432,8 @@ def test_laufband_with_custom_hash_function(tmp_path):
     data = ["task_alpha", "task_beta", "task_gamma"]
 
     # Custom hash function that works with UUID mapping
-    # The function receives item_uuid, so we need to access the original item via the mapping
+    # The function receives item_uuid, so we need to access the original item
+    # via the mapping
     def custom_hash(item_uuid):
         # This is a bit artificial since we need to access the Laufband instance
         # In practice, users would structure this differently

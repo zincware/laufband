@@ -4,7 +4,8 @@ from laufband import Graphband
 
 
 def test_graphband_lazy_consumption(tmp_path):
-    """Test that GraphBand lazily consumes the generator instead of consuming it all upfront."""
+    """Test that GraphBand lazily consumes the generator instead of
+    consuming it all upfront."""
     consumed_items = []
 
     def lazy_graph():
