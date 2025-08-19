@@ -88,7 +88,6 @@ def test_graphband_double_worker(tmp_path):
     assert x3 in {2, 3}
 
 
-
 def test_graphband_generator_input():
     """Test Graphband with generator-based lazy task discovery."""
 
@@ -173,8 +172,6 @@ def test_graphband_termination_conditions(tmp_path):
     assert len(completed_tasks) == 3
 
 
-
-
 def test_graphband_large_dag_performance():
     """Test performance with larger DAG."""
 
@@ -240,7 +237,10 @@ def test_graphband_non_hashable_items(tmp_path):
 
     db_path = tmp_path / "graph.sqlite"
     pbar = Graphband(
-        graph_fn=graph_with_uuid_mapping(), hash_fn=task_hash, com=db_path, cleanup=False
+        graph_fn=graph_with_uuid_mapping(),
+        hash_fn=task_hash,
+        com=db_path,
+        cleanup=False,
     )
 
     results = list(pbar)

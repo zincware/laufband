@@ -12,6 +12,7 @@ from laufband.db import GraphbandDB
 
 _T = t.TypeVar("_T", covariant=True)
 
+
 class GraphTraversalProtocol(t.Protocol):
     """Protocol for iterating over a graph's nodes and their predecessors.
 
@@ -69,8 +70,8 @@ class Graphband(t.Generic[_T]):
         Arguments
         ---------
         graph_fn : GraphTraversalProtocol
-            Object that implements the GraphTraversalProtocol, yielding tuples of 
-            (node, predecessors) for graph traversal. Nodes are tasks and must be 
+            Object that implements the GraphTraversalProtocol, yielding tuples of
+            (node, predecessors) for graph traversal. Nodes are tasks and must be
             hashable.
 
         hash_fn : Callable[[Any], str] | None
@@ -224,10 +225,10 @@ class Graphband(t.Generic[_T]):
             yield from tqdm((node for node, _ in graph_iter), **self.tqdm_kwargs)
             return
 
-        # Handle generator vs callable logic: 
+        # Handle generator vs callable logic:
         # - Callables return fresh generators each time (for fixed graphs)
         # - Generators are consumed once and cached (for lazy evaluation)
-        
+
         # Consume generator once and cache for reuse
         if callable(self.graph_fn):
             # Fixed graph via callable
@@ -235,12 +236,12 @@ class Graphband(t.Generic[_T]):
         else:
             # Fixed graph via generator (lazy evaluation)
             graph_data = list(self.graph_fn)
-        
+
         with self.lock:
             # Initialize database with the fixed graph
             if not self.com.exists():
                 self.db.create_from_graph(iter(graph_data), self.hash_fn)
-            
+
             # Update database with the graph (no dynamic changes expected)
             self.db.update_from_graph(iter(graph_data), self.hash_fn)
 

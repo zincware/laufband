@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-
 T_STATE = t.Literal["running", "pending", "failed", "completed", "died"]
 # failed: the job failed with some exit code
 # died: the python process was killed and the worker could not update the
@@ -154,9 +153,7 @@ class GraphbandDB:
             else:
                 raise StopIteration
 
-    def get_ready_task(
-        self, graph, hash_fn: t.Callable[[t.Any], str]
-    ) -> Iterator[str]:
+    def get_ready_task(self, graph, hash_fn: t.Callable[[t.Any], str]) -> Iterator[str]:
         """Get next ready task that has all dependencies completed."""
         with self.connect() as conn:
             cursor = conn.cursor()
@@ -211,11 +208,12 @@ class GraphbandDB:
 
     def create(self, size: int):
         """Create database for sequential tasks (backwards compatibility)."""
+
         # Create a simple graph protocol with numbered nodes
         def simple_protocol():
             for i in range(size):
                 yield (i, set())  # No predecessors for simple sequential tasks
-        
+
         self.create_from_graph(simple_protocol(), str)
 
     def create_from_graph(self, graph, hash_fn: t.Callable[[t.Any], str]):
@@ -230,7 +228,7 @@ class GraphbandDB:
                     count INTEGER DEFAULT 0
                 )
             """)
-            
+
             # Process GraphTraversalProtocol
             for node, _ in graph:
                 task_id = hash_fn(node)
@@ -241,7 +239,7 @@ class GraphbandDB:
                     """,
                     (task_id, "pending", None),
                 )
-            
+
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS worker_table (
                     worker TEXT PRIMARY KEY,

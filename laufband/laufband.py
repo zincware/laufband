@@ -3,7 +3,6 @@ import uuid
 from collections.abc import Generator, Iterable
 from pathlib import Path
 
-import networkx as nx
 from flufl.lock import Lock
 
 from laufband.graphband import Graphband
@@ -110,7 +109,7 @@ class Laufband(t.Generic[_T]):
         class LazyGraphProtocol:
             def __init__(self, parent):
                 self.parent = parent
-            
+
             def __iter__(self):
                 # Lazy evaluation - create mapping only when iteration is requested
                 if not self.parent._mapping_created:
@@ -122,7 +121,7 @@ class Laufband(t.Generic[_T]):
                 # Yield nodes with no predecessors (disconnected graph)
                 for item_uuid in self.parent._item_mapping.keys():
                     yield (item_uuid, set())
-        
+
         graph_fn = LazyGraphProtocol(self)
 
         # Use default Laufband hash function if none provided
