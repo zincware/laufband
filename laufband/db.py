@@ -177,6 +177,8 @@ class TaskEntry(Base):
     def worker_availability(self) -> bool:
         running_workers = set()
         for status in self.statuses:
+            if status.worker_id is None:
+                continue
             if status.status == TaskStatusEnum.RUNNING:
                 running_workers.add(status.worker_id)
             elif status.status == TaskStatusEnum.COMPLETED:
