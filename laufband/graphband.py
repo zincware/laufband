@@ -291,7 +291,11 @@ class Graphband(t.Generic[_T]):
                 with Session(self._engine) as session:
                     task_entry = session.get(TaskEntry, task.id)
                     if task_entry:
+                        if task_entry.completed:
+                            continue
                         if task_entry.failed_retries >= self._max_failed_retries:
+                            continue
+                        if not task_entry.worker_availability:
                             continue
                     else:
                         task_entry = TaskEntry(

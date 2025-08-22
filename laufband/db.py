@@ -99,8 +99,44 @@ class TaskEntry(Base):
 
     @property
     def failed_retries(self) -> int:
-        return sum(1 for x in self.statuses if x.status == TaskStatusEnum.FAILED)
+        result = sum(1 for x in self.statuses if x.status == TaskStatusEnum.FAILED)
+        if result == 0:
+            return -1  # there is no "0" failed retries, just no failed retries and we indicate that with 1
+        return result
 
     @property
     def killed_retries(self) -> int:
         return sum(1 for x in self.statuses if x.status == TaskStatusEnum.KILLED)
+
+    @property
+    def active_workers(self) -> int:
+        running_workers = set()
+        for status in self.statuses:
+            if status.status == TaskStatusEnum.RUNNING:
+                running_workers.add(status.worker_id)
+            else:
+                # discard workers that, e.g. died while running
+                running_workers.discard(status.worker_id)
+        return len(running_workers)
+
+    @property
+    def worker_availability(self) -> bool:
+        running_workers = set()
+        for status in self.statuses:
+            if status.status == TaskStatusEnum.RUNNING:
+                running_workers.add(status.worker_id)
+            elif status.status == TaskStatusEnum.COMPLETED:
+                if status.worker_id in running_workers:
+                    # a worker has succesfully completed and
+                    #  no new workers should be picked up
+                    return False
+            else:
+                # discard workers that, e.g. died while running
+                running_workers.discard(status.worker_id)
+        return len(running_workers) < self.max_parallel_workers
+
+    @property
+    def completed(self) -> bool:
+        if self.active_workers > 0:
+            return False
+        return self.current_status.status == TaskStatusEnum.COMPLETED

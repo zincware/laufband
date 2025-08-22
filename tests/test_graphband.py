@@ -1,17 +1,23 @@
 import multiprocessing
 import time
+import typing as t
 
 import pytest
 from flufl.lock import Lock
 from sqlalchemy.orm import Session
 
-from laufband import Graphband, Task
+from laufband import Graphband, GraphTraversalProtocol, Task
 from laufband.db import TaskEntry, TaskStatusEnum, WorkerEntry, WorkerStatus
 
 
 def sequential_task():
     for i in range(10):
         yield Task(id=f"task_{i}", data={"value": i})
+
+
+def sequential_multi_worker_task():
+    for i in range(10):
+        yield Task(id=f"task_{i}", data={"value": i}, max_parallel_workers=2)
 
 
 @pytest.mark.human_reviewed
@@ -170,9 +176,15 @@ def test_duplicate_worker(tmp_path):
         )
 
 
-def sequential_task_worker(lock_path: str, db: str, file: str, timeout: float):
+def task_worker(
+    iterator: t.Type[GraphTraversalProtocol],
+    lock_path: str,
+    db: str,
+    file: str,
+    timeout: float,
+):
     lock = Lock(lock_path)
-    pbar = Graphband(sequential_task(), lock=lock, db=db)
+    pbar = Graphband(iterator(), lock=lock, db=db)
     for task in pbar:
         with pbar.lock:
             with open(file, "a") as f:
@@ -182,7 +194,7 @@ def sequential_task_worker(lock_path: str, db: str, file: str, timeout: float):
 
 @pytest.mark.human_reviewed
 @pytest.mark.parametrize("num_processes", [1, 2, 4])
-def test_multiprocessing_pool(tmp_path, num_processes):
+def test_multiprocessing_sequential_task(tmp_path, num_processes):
     """Test laufband using a multiprocessing pool."""
     lock_path = f"{tmp_path}/graphband.lock"
     db = f"sqlite:///{tmp_path}/graphband.sqlite"
@@ -191,8 +203,9 @@ def test_multiprocessing_pool(tmp_path, num_processes):
     with multiprocessing.Pool(processes=num_processes) as pool:
         # increase the timeout for more processes
         pool.starmap(
-            sequential_task_worker,
-            [(lock_path, db, file, num_processes * 0.1)] * num_processes,
+            task_worker,
+            [(sequential_task, lock_path, db, file, num_processes * 0.1)]
+            * num_processes,
         )
 
     worker = []
@@ -205,3 +218,31 @@ def test_multiprocessing_pool(tmp_path, num_processes):
 
     assert len(set(worker)) == num_processes
     assert len(set(tasks)) == 10
+
+
+def test_sequential_multi_worker_task(tmp_path):
+    lock_path = f"{tmp_path}/graphband.lock"
+    db = f"sqlite:///{tmp_path}/graphband.sqlite"
+    file = f"{tmp_path}/output.txt"
+    num_processes = 4
+
+    with multiprocessing.Pool(processes=num_processes) as pool:
+        # increase the timeout for more processes
+        pool.starmap(
+            task_worker,
+            [(sequential_multi_worker_task, lock_path, db, file, num_processes * 0.2)]
+            * num_processes,
+        )
+
+    worker = []
+    tasks = []
+    with open(file, "r") as f:
+        for line in f:
+            task_id, worker_id = line.strip().split(" - ")
+            worker.append(worker_id)
+            tasks.append(task_id)
+    assert len(set(worker)) == num_processes
+    assert len(set(tasks)) == 10
+    assert (
+        len(tasks) == 20
+    )  # with the given timeout we expect each job to be processed by 2 workers.
