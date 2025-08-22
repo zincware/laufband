@@ -27,15 +27,19 @@ class Monitor:
     ) -> list[TaskEntry]:
         with Session(self.engine) as session:
             tasks = session.query(TaskEntry).all()
-            
+
             # Load all relationships while still in session
             for task in tasks:
                 _ = task.statuses  # Force loading of statuses
                 for status_entry in task.statuses:
                     _ = status_entry.worker  # Force loading of worker
-            
+
             if state is not None:
-                tasks = [task for task in tasks if task.statuses and task.current_status.status == state]
+                tasks = [
+                    task
+                    for task in tasks
+                    if task.statuses and task.current_status.status == state
+                ]
             if worker is not None:
                 # check if worker in any status for all tasks is the current worker
                 task_dict = {}
@@ -44,9 +48,9 @@ class Monitor:
                         if status_entry.worker_id == worker.id:
                             task_dict[task.id] = task
                             break
-                tasks = list(task_dict.values())          
+                tasks = list(task_dict.values())
             session.expunge_all()
-            
+
             return tasks
 
     def get_workflow(self) -> WorkflowEntry:
