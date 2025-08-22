@@ -562,7 +562,97 @@ def test_has_more_jobs(tmp_path):
     )
     assert w3.has_more_jobs is False # all jobs are no completed succesfully
 
-# TODO write a test with a graph a --> b -->c where b needs a different label than a, c
-#  but has_more_jobs for the a/c worker should be true until c is completed
-#  but the worker won't be able to pick it up. The user should take care how often
-#  to iterate the worker until they stop it / define the timeout.
+def blocked_dependency_graph_task():
+    """Create a graph where task b blocks task c due to label requirements.
+    
+    Graph structure:
+    a --> b --> c
+    Where b requires 'special-worker' label, but a and c require 'main' label.
+    """
+    digraph = nx.DiGraph()
+    edges = [
+        ("a", "b"),
+        ("b", "c"),
+    ]
+    digraph.add_edges_from(edges)
+    digraph.nodes["b"]["requirements"] = {"special-worker"}
+    for node in nx.topological_sort(digraph):
+        yield Task(
+            id=node,
+            data=node,
+            dependencies=set(digraph.predecessors(node)),
+            requirements=digraph.nodes[node].get("requirements", {"main"}),
+        )
+
+
+def test_has_more_jobs_with_blocked_dependencies(tmp_path):
+    """Test has_more_jobs when dependencies are blocked by label mismatches.
+    
+    This test verifies the TODO scenario where:
+    - a --> b --> c dependency chain
+    - b needs a different label than a, c  
+    - has_more_jobs for the a/c worker should be true until c is completed
+    - but the worker won't be able to pick up c because b isn't completed
+    """
+    # Worker that can process 'main' tasks (a and c) but not 'special-worker' tasks (b)
+    main_worker = Graphband(
+        blocked_dependency_graph_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        labels={"main"},
+        identifier="main-worker",
+    )
+    
+    # Initially should have jobs available
+    assert main_worker.has_more_jobs is True
+    
+    # Process available tasks - should only get task 'a'
+    items = list(main_worker)
+    assert len(items) == 1
+    assert items[0].id == "a"
+    
+    # After processing 'a', should still have more jobs (task 'c' exists but is blocked)
+    # This is the key behavior: has_more_jobs returns True even though this worker
+    # cannot make progress because 'c' depends on 'b' which requires different labels
+    assert main_worker.has_more_jobs is True
+    
+    # Trying to iterate again should yield nothing since 'c' is blocked by 'b'
+    items_second = list(main_worker)
+    assert len(items_second) == 0
+    
+    # Should still report more jobs available (task 'c' is incomplete)
+    assert main_worker.has_more_jobs is True
+    
+    # Now create a worker that can process the 'special-worker' task 'b'
+    special_worker = Graphband(
+        blocked_dependency_graph_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        labels={"special-worker"},
+        identifier="special-worker",
+    )
+    
+    # Special worker should have jobs (task 'b')
+    assert special_worker.has_more_jobs is True
+    
+    # Process task 'b'
+    items_special = list(special_worker)
+    assert len(items_special) == 1
+    assert items_special[0].id == "b"
+    
+    # After 'b' is complete, special worker should have no more jobs
+    assert special_worker.has_more_jobs is False
+    
+    # Now main worker should be able to process task 'c'
+    assert main_worker.has_more_jobs is True
+    
+    items_final = list(main_worker)
+    assert len(items_final) == 1
+    assert items_final[0].id == "c"
+    
+    # Finally, no more jobs for either worker
+    assert main_worker.has_more_jobs is False
+    assert special_worker.has_more_jobs is False
+
+
+# TODO: need to test killed jobs
