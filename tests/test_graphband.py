@@ -53,6 +53,31 @@ def graph_task():
         )
 
 
+def multi_dependency_graph_task():
+    """Create a graph where some tasks depend on multiple previous tasks.
+
+    Graph structure:
+    a --> c
+    b --> c  (c depends on both a and b)
+    c --> e
+    d --> e  (e depends on both c and d)
+    """
+    digraph = nx.DiGraph()
+    edges = [
+        ("a", "c"),
+        ("b", "c"),
+        ("c", "e"),
+        ("d", "e"),
+    ]
+    digraph.add_edges_from(edges)
+    for node in nx.topological_sort(digraph):
+        yield Task(
+            id=node,
+            data=node,
+            dependencies=set(digraph.predecessors(node)),
+        )
+
+
 @pytest.mark.human_reviewed
 def test_graphband_sequential_success(tmp_path):
     pbar = Graphband(
@@ -458,6 +483,39 @@ def test_graph_task(tmp_path):
         "g": ["c"],
     }
     with Session(w1._engine) as session:
+        entries = {}
+        for task_id in expected_dependencies:
+            entry = session.query(TaskEntry).filter(TaskEntry.id == task_id).first()
+            assert entry is not None
+            assert entry.current_status.status == TaskStatusEnum.COMPLETED
+            entries[task_id] = entry
+
+        for task_id, deps in expected_dependencies.items():
+            assert entries[task_id].current_status.dependencies == [
+                entries[d] for d in deps
+            ]
+
+
+def test_multi_dependency_graph_task(tmp_path):
+    """Test task execution with multiple dependencies per task."""
+    worker = Graphband(
+        multi_dependency_graph_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+    )
+    items = [x.id for x in worker]
+    assert set(items) == {"a", "b", "c", "d", "e"}
+
+    # Verify dependencies are stored correctly
+    expected_dependencies = {
+        "a": [],
+        "b": [],
+        "c": ["a", "b"],  # c depends on both a and b
+        "d": [],
+        "e": ["c", "d"],  # e depends on both c and d
+    }
+
+    with Session(worker._engine) as session:
         entries = {}
         for task_id in expected_dependencies:
             entry = session.query(TaskEntry).filter(TaskEntry.id == task_id).first()
