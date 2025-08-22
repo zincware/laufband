@@ -261,50 +261,52 @@ class Graphband(t.Generic[TaskTypeVar]):
     @property
     def has_more_jobs(self) -> bool:
         """Check if there are any more jobs that this worker could process.
-        
+
         Returns
         -------
         bool
             True if there are jobs that this worker could potentially process,
             False if all jobs are either completed or permanently failed/killed.
-            
+
         Notes
         -----
         Simple logic: Check if there are processable jobs in the failed cache
-        or incomplete tasks in the database that match our labels and haven't 
+        or incomplete tasks in the database that match our labels and haven't
         exceeded retry limits.
-        
+
         Jobs with label mismatches are ignored since this worker would never
         pick them up.
-        
+
         Examples
         --------
         >>> pbar = Graphband(tasks, labels={'worker-a'})
-        >>> list(pbar)  # Process all available jobs  
+        >>> list(pbar)  # Process all available jobs
         >>> pbar.has_more_jobs  # Should be False if no more jobs for this worker
         False
         """
         if self.disabled:
             return False
-        
+
         # Simple logic - check failed cache and database
         retryable_failed_jobs = 0
         incomplete_jobs = 0
-        
+
         with self.lock:
             with Session(self._engine) as session:
                 # Check failed job cache
                 for task in self._failed_job_cache.values():
                     if not task.requirements.issubset(self.labels):
                         continue
-                    
+
                     task_entry = session.get(TaskEntry, task.id)
                     if task_entry is None:
                         retryable_failed_jobs += 1  # New task, can be processed
-                    elif (task_entry.failed_retries < self._max_failed_retries and
-                          task_entry.killed_retries < self._max_killed_retries):
+                    elif (
+                        task_entry.failed_retries < self._max_failed_retries
+                        and task_entry.killed_retries < self._max_killed_retries
+                    ):
                         retryable_failed_jobs += 1
-                
+
                 # Check database for incomplete tasks
                 workflow = (
                     session.query(WorkflowEntry)
@@ -316,41 +318,52 @@ class Graphband(t.Generic[TaskTypeVar]):
                         # Skip if labels don't match
                         if not set(task_entry.requirements).issubset(self.labels):
                             continue
-                        
+
                         # Count incomplete tasks that can be retried
-                        if (not task_entry.completed and 
-                            task_entry.failed_retries < self._max_failed_retries and
-                            task_entry.killed_retries < self._max_killed_retries):
+                        if (
+                            not task_entry.completed
+                            and task_entry.failed_retries < self._max_failed_retries
+                            and task_entry.killed_retries < self._max_killed_retries
+                        ):
                             incomplete_jobs += 1
-                    
+
                     # If no incomplete jobs found but iterator hasn't completed,
                     # check if we have any tasks matching our labels
                     if incomplete_jobs == 0 and not self._iterator_completed:
                         # Check if all tasks matching our labels are complete
-                        total_matching_tasks = len([
-                            t for t in workflow.tasks 
-                            if set(t.requirements).issubset(self.labels)
-                        ])
-                        completed_matching_tasks = len([
-                            t for t in workflow.tasks 
-                            if set(t.requirements).issubset(self.labels) and t.completed
-                        ])
-                        
-                        # If we have tasks in DB and all matching ones are complete, 
+                        total_matching_tasks = len(
+                            [
+                                t
+                                for t in workflow.tasks
+                                if set(t.requirements).issubset(self.labels)
+                            ]
+                        )
+                        completed_matching_tasks = len(
+                            [
+                                t
+                                for t in workflow.tasks
+                                if set(t.requirements).issubset(self.labels)
+                                and t.completed
+                            ]
+                        )
+
+                        # If we have tasks in DB and all matching ones are complete,
                         # and no retryable failed jobs, then no more jobs
-                        if (total_matching_tasks > 0 and 
-                            completed_matching_tasks == total_matching_tasks and 
-                            retryable_failed_jobs == 0):
+                        if (
+                            total_matching_tasks > 0
+                            and completed_matching_tasks == total_matching_tasks
+                            and retryable_failed_jobs == 0
+                        ):
                             return False
-                        
+
                         # Otherwise, there might be more tasks to process
                         return True
                 else:
-                    # No workflow exists yet - if we haven't completed iteration, 
+                    # No workflow exists yet - if we haven't completed iteration,
                     # assume there are jobs from the original graph
                     if not self._iterator_completed:
                         return True
-        
+
         return (retryable_failed_jobs + incomplete_jobs) > 0
 
     def __iter__(self) -> Iterator[Task[TaskTypeVar]]:
