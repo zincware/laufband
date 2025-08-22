@@ -1,3 +1,4 @@
+import logging
 import os
 import socket
 import threading
@@ -22,6 +23,8 @@ from laufband.db import (
 )
 from laufband.hearbeat import heartbeat
 from laufband.task import Task
+
+log = logging.getLogger(__name__)
 
 _T = t.TypeVar("_T", covariant=True)
 
@@ -182,6 +185,7 @@ class Graphband(t.Generic[_T]):
         self._max_died_retries = max_died_retries
         self._db = db
         self._failed_job_cache = {}  # here we keep track of failed job data to be retried later.
+        self.iterator = None
 
         if not self.disabled:
             # we need to lock between threads and workers,
@@ -274,30 +278,40 @@ class Graphband(t.Generic[_T]):
 
         self._close_trigger = False  # reset close_trigger on new iter call
 
-        iterator = tqdm(
+        self.iterator = tqdm(
             (
                 node
                 for node in chain(list(self._failed_job_cache.values()), self.graph_fn)
             ),
             **self.tqdm_kwargs,
         )
+        try:
+            self.iterator.total = len(self.graph_fn) + len(self._failed_job_cache)
+        except TypeError:
+            pass
         if self.disabled:
             # If disabled, just iterate over the graph protocol
-            yield from iterator
+            yield from self.iterator
             return
 
-        for task in iterator:
+        for task in self.iterator:
             with self.lock:
                 with Session(self._engine) as session:
                     task_entry = session.get(TaskEntry, task.id)
                     if task_entry:
                         if task_entry.completed:
+                            log.debug(f"Task {task.id} already completed, skipping.")
                             continue
                         if task_entry.failed_retries >= self._max_failed_retries:
+                            log.debug(
+                                f"Task {task.id} has failed too many times, skipping."
+                            )
                             continue
                         if not task_entry.worker_availability:
+                            log.debug(f"Task {task.id} has no free workers, skipping.")
                             continue
                     else:
+                        log.debug(f"Registering task {task.id} in database.")
                         task_entry = TaskEntry(
                             id=task.id,
                             # dependencies=task.dependencies,
@@ -319,24 +333,25 @@ class Graphband(t.Generic[_T]):
                 self._failed_job_cache.pop(task.id, None)
             except GeneratorExit:
                 self._failed_job_cache[task.id] = task
+                with self.lock:
+                    with Session(self._engine) as session:
+                        task_entry = session.get(TaskEntry, task.id)
+                        if task_entry is None:
+                            raise ValueError(f"Task with id {task.id} not found.")
+                        task_entry.statuses.append(
+                            TaskStatusEntry(status=TaskStatusEnum.FAILED, worker=worker)
+                        )
+                        session.commit()
+                    break
+            with self.lock:
                 with Session(self._engine) as session:
                     task_entry = session.get(TaskEntry, task.id)
                     if task_entry is None:
                         raise ValueError(f"Task with id {task.id} not found.")
                     task_entry.statuses.append(
-                        TaskStatusEntry(status=TaskStatusEnum.FAILED, worker=worker)
+                        TaskStatusEntry(status=TaskStatusEnum.COMPLETED, worker=worker)
                     )
                     session.commit()
-                break
-
-            with Session(self._engine) as session:
-                task_entry = session.get(TaskEntry, task.id)
-                if task_entry is None:
-                    raise ValueError(f"Task with id {task.id} not found.")
-                task_entry.statuses.append(
-                    TaskStatusEntry(status=TaskStatusEnum.COMPLETED, worker=worker)
-                )
-                session.commit()
             if self._close_trigger:
                 break
         self._thread_event.set()
