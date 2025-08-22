@@ -24,7 +24,9 @@ from laufband.db import TaskStatusEnum, WorkerStatus
 from laufband.monitor import Monitor
 
 app = typer.Typer(help="Laufband CLI Tool")
-ACTIVITY_TIMEOUT_SECONDS = 60  # 1 minute # can be handled better via the db expired directly.
+ACTIVITY_TIMEOUT_SECONDS = (
+    60  # 1 minute # can be handled better via the db expired directly.
+)
 
 
 class LaufbandStatusDisplay:
@@ -72,7 +74,11 @@ class LaufbandStatusDisplay:
 
             for worker in workers:
                 # Count processed tasks for this worker
-                processed_tasks = len(self.monitor.get_tasks(state=TaskStatusEnum.COMPLETED, worker=worker))
+                processed_tasks = len(
+                    self.monitor.get_tasks(
+                        state=TaskStatusEnum.COMPLETED, worker=worker
+                    )
+                )
 
                 worker_info.append(
                     {
@@ -193,7 +199,10 @@ class LaufbandStatusDisplay:
                 time_diff = (now - last_heartbeat).total_seconds()
 
                 status = worker["status"]
-                if time_diff > ACTIVITY_TIMEOUT_SECONDS and status in [WorkerStatus.IDLE.value, WorkerStatus.BUSY.value]:
+                if time_diff > ACTIVITY_TIMEOUT_SECONDS and status in [
+                    WorkerStatus.IDLE.value,
+                    WorkerStatus.BUSY.value,
+                ]:
                     status = f"{status} (stale)"
                     status_color = "red"
                 else:
