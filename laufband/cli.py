@@ -1,9 +1,10 @@
 import datetime
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import typer
+from flufl.lock import Lock
 from rich.console import Console
 from rich.layout import Layout
 from rich.live import Live
@@ -18,10 +19,9 @@ from rich.progress import (
 )
 from rich.table import Table
 from rich.text import Text
-from flufl.lock import Lock
 
+from laufband.db import TaskStatusEnum
 from laufband.monitor import Monitor
-from laufband.db import TaskStatusEnum, WorkerStatus
 
 app = typer.Typer(help="Laufband CLI Tool")
 ACTIVITY_TIMEOUT_SECONDS = 300  # 5 minutes
@@ -39,8 +39,7 @@ class LaufbandStatusDisplay:
         if self.monitor is None and self.db_path.exists():
             try:
                 self.monitor = Monitor(
-                    lock=Lock(str(self.lock_path)),
-                    db=f"sqlite:///{self.db_path}"
+                    lock=Lock(str(self.lock_path)), db=f"sqlite:///{self.db_path}"
                 )
             except Exception:
                 self.monitor = None
@@ -70,21 +69,25 @@ class LaufbandStatusDisplay:
         try:
             workers = self.monitor.get_workers()
             worker_info = []
-            
+
             for worker in workers:
                 # Count running tasks for this worker
                 running_tasks = len(worker.running_tasks)
-                
-                worker_info.append({
-                    "worker_id": worker.id,
-                    "status": worker.status.value,
-                    "last_heartbeat": worker.last_heartbeat.strftime("%Y-%m-%d %H:%M:%S"),
-                    "running_tasks": running_tasks,
-                    "hostname": worker.hostname or "Unknown",
-                    "pid": worker.pid or 0,
-                    "labels": ", ".join(worker.labels) if worker.labels else "None"
-                })
-            
+
+                worker_info.append(
+                    {
+                        "worker_id": worker.id,
+                        "status": worker.status.value,
+                        "last_heartbeat": worker.last_heartbeat.strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        ),
+                        "running_tasks": running_tasks,
+                        "hostname": worker.hostname or "Unknown",
+                        "pid": worker.pid or 0,
+                        "labels": ", ".join(worker.labels) if worker.labels else "None",
+                    }
+                )
+
             return worker_info
         except Exception:
             self.monitor = None
@@ -95,7 +98,7 @@ class LaufbandStatusDisplay:
         self._ensure_monitor_connection()
         if self.monitor is None:
             return None
-        
+
         try:
             workflow = self.monitor.get_workflow()
             return workflow.total_tasks
@@ -105,7 +108,7 @@ class LaufbandStatusDisplay:
     def create_progress_bar(self, stats: Dict[str, int]) -> Panel:
         """Create overall progress bar"""
         total_from_workflow = self.get_total_tasks()
-        
+
         if total_from_workflow is not None:
             total = total_from_workflow
             progress = Progress(
@@ -188,7 +191,7 @@ class LaufbandStatusDisplay:
                 )
                 now = datetime.datetime.now()
                 time_diff = (now - last_heartbeat).total_seconds()
-                
+
                 status = worker["status"]
                 if time_diff > ACTIVITY_TIMEOUT_SECONDS:
                     status = f"{status} (stale)"
@@ -198,9 +201,9 @@ class LaufbandStatusDisplay:
                         "idle": "green",
                         "busy": "yellow",
                         "offline": "red",
-                        "killed": "red bold"
+                        "killed": "red bold",
                     }.get(worker["status"], "white")
-                    
+
             except Exception:
                 status = worker["status"]
                 status_color = "yellow"
@@ -250,8 +253,12 @@ class LaufbandStatusDisplay:
 
 @app.command()
 def status(
-    db: str = typer.Option("laufband.sqlite", "--db", help="Path to the laufband database file"),
-    lock: str = typer.Option("laufband.lock", "--lock", help="Path to the laufband lock file")
+    db: str = typer.Option(
+        "laufband.sqlite", "--db", help="Path to the laufband database file"
+    ),
+    lock: str = typer.Option(
+        "laufband.lock", "--lock", help="Path to the laufband lock file"
+    ),
 ):
     """Show current laufband status"""
     display = LaufbandStatusDisplay(db, lock)
@@ -260,14 +267,20 @@ def status(
 
 @app.command()
 def watch(
-    db: str = typer.Option("laufband.sqlite", "--db", help="Path to the laufband database file"),
-    lock: str = typer.Option("laufband.lock", "--lock", help="Path to the laufband lock file"),
-    interval: float = typer.Option(2.0, "--interval", help="Update interval in seconds")
+    db: str = typer.Option(
+        "laufband.sqlite", "--db", help="Path to the laufband database file"
+    ),
+    lock: str = typer.Option(
+        "laufband.lock", "--lock", help="Path to the laufband lock file"
+    ),
+    interval: float = typer.Option(
+        2.0, "--interval", help="Update interval in seconds"
+    ),
 ):
     """Watch laufband status in real-time"""
     display = LaufbandStatusDisplay(db, lock)
     console = Console()
-    
+
     try:
         with Live(console=console, refresh_per_second=1 / interval) as live:
             while True:

@@ -37,6 +37,7 @@ class TaskStatusEnum(StrEnum):
     BLOCKED = "blocked"
     KILLED = "killed"
 
+
 class WorkflowEntry(Base):
     __tablename__ = "workflows"
 
@@ -45,6 +46,7 @@ class WorkflowEntry(Base):
 
     workers: Mapped[List["WorkerEntry"]] = relationship(back_populates="workflow")
     tasks: Mapped[List["TaskEntry"]] = relationship(back_populates="workflow")
+
 
 # --- Worker ---
 class WorkerEntry(Base):
@@ -147,7 +149,7 @@ class TaskEntry(Base):
         if result == 0:
             return -1  # there is no "0" killed retries, just no killed retries and we indicate that with -1
         return result
-    
+
     @property
     def runtime(self) -> float:
         start_time = self.statuses[0].timestamp

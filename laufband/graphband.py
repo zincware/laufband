@@ -6,7 +6,6 @@ import typing as t
 from collections.abc import Iterator
 from contextlib import ExitStack, nullcontext
 from itertools import chain
-from pathlib import Path
 
 from flufl.lock import Lock
 from sqlalchemy import create_engine
@@ -202,7 +201,11 @@ class Graphband(t.Generic[TaskTypeVar]):
                 # check if a worker with the given identifier already exists
                 if session.get(WorkerEntry, self._identifier) is not None:
                     raise ValueError("Worker with this identifier already exists")
-                workflow = session.query(WorkflowEntry).filter(WorkflowEntry.id == "main").first()
+                workflow = (
+                    session.query(WorkflowEntry)
+                    .filter(WorkflowEntry.id == "main")
+                    .first()
+                )
                 if workflow is None:
                     try:
                         size = len(self.graph_fn)
@@ -250,12 +253,14 @@ class Graphband(t.Generic[TaskTypeVar]):
     def labels(self) -> frozenset[str]:
         """Frozenset of labels associated with this worker"""
         return self._labels
+
     @property
     def iterator(self) -> tqdm:
         """Return the tqdm iterator for the graph."""
         if self._iterator is None:
             raise ValueError("Iterator not initialized. Call __iter__() first.")
         return self._iterator
+
     @property
     def db(self) -> str:
         """Return the database URL."""
@@ -302,6 +307,29 @@ class Graphband(t.Generic[TaskTypeVar]):
                             raise RuntimeError(
                                 f"Tasks '{non_compliant_tasks}' have failed"
                             )
+
+                    # check dependencies
+                    skip_task = False
+                    for dep in task.dependencies:
+                        dep_entry = (
+                            session.query(TaskEntry).filter(TaskEntry.id == dep).first()
+                        )
+                        if dep_entry is None:
+                            log.debug(
+                                f"Dependency {dep} not found, skipping task {task.id}."
+                            )
+                            skip_task = True
+                            break
+                        elif not dep_entry.completed:
+                            log.debug(
+                                f"Dependency {dep} not completed, skipping task {task.id}."
+                            )
+                            skip_task = True
+                            break
+                    if skip_task:
+                        self._failed_job_cache[task.id] = task
+                        continue
+
                     task_entry = session.get(TaskEntry, task.id)
                     if task_entry:
                         if task_entry.completed:
@@ -322,7 +350,11 @@ class Graphband(t.Generic[TaskTypeVar]):
                             continue
                     else:
                         log.debug(f"Registering task {task.id} in database.")
-                        workflow = session.query(WorkflowEntry).filter(WorkflowEntry.id == "main").first()
+                        workflow = (
+                            session.query(WorkflowEntry)
+                            .filter(WorkflowEntry.id == "main")
+                            .first()
+                        )
                         if workflow is None:
                             raise ValueError("Workflow 'main' not found.")
                         task_entry = TaskEntry(

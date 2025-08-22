@@ -1,16 +1,18 @@
+import os
+import typing as t
+
 import pytest
+from flufl.lock import Lock
+
 from laufband import Graphband, Monitor, Task
 from laufband.db import TaskStatusEnum
-from flufl.lock import Lock
-import typing as t
-import os
+
 
 @pytest.fixture
 def graphband_state(tmp_path) -> t.Tuple[Lock, str]:
     def sequential_task():
         for i in range(10):
             yield Task(id=f"task_{i}", data={"value": i})
-
 
     pbar = Graphband(
         sequential_task(),
@@ -20,8 +22,9 @@ def graphband_state(tmp_path) -> t.Tuple[Lock, str]:
     for item in pbar:
         if item.id == "task_5":
             break
-    
+
     return pbar.lock, pbar.db
+
 
 def test_monitor(graphband_state):
     lock, db = graphband_state

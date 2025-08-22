@@ -3,6 +3,7 @@ import os
 import time
 import typing as t
 
+import networkx as nx
 import pytest
 from flufl.lock import Lock
 from sqlalchemy import create_engine
@@ -27,6 +28,29 @@ def sequential_task_with_labels():
         yield Task(id=f"task_{i}", data={"value": i}, requirements={"cpu"})
     for i in range(5, 10):
         yield Task(id=f"task_{i}", data={"value": i}, requirements={"gpu"})
+
+
+def graph_task():
+    digraph = nx.DiGraph()
+    edges = [
+        ("a", "b"),
+        ("a", "c"),
+        ("b", "d"),
+        ("b", "e"),
+        ("c", "f"),
+        ("c", "g"),
+    ]
+    digraph.add_edges_from(edges)
+    digraph.nodes["b"]["requirements"] = {"b-branch"}
+    digraph.nodes["d"]["requirements"] = {"b-branch"}
+    digraph.nodes["e"]["requirements"] = {"b-branch"}
+    for node in nx.topological_sort(digraph):
+        yield Task(
+            id=node,
+            data=node,
+            dependencies=digraph.predecessors(node),
+            requirements=digraph.nodes[node].get("requirements", {"main"}),
+        )
 
 
 @pytest.mark.human_reviewed
@@ -394,3 +418,32 @@ def test_failure_policy_stop(tmp_path):
     with pytest.raises(RuntimeError):
         for idx in worker:
             pass
+
+
+def test_graph_task(tmp_path):
+    w1 = Graphband(
+        graph_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        labels={"b-branch"},
+        identifier="b-branch-worker",
+    )
+    items = [x.id for x in w1]
+    assert items == []
+
+    w2 = Graphband(
+        graph_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        identifier="main-worker",
+        labels={"main"},
+    )
+    items = [x.id for x in w2]
+    assert items == [
+        "a",
+        "c",
+        "f",
+        "g",
+    ]  # the "b", "d", "e" are in the b-branch which should not be run
+    items = [x.id for x in w1]
+    assert items == ["b", "d", "e"]
