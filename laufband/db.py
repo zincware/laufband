@@ -37,6 +37,11 @@ class TaskStatusEnum(StrEnum):
     BLOCKED = "blocked"
     KILLED = "killed"
 
+class WorkflowEntry(Base):
+    __tablename__ = "workflows"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    total_tasks: Mapped[int] = mapped_column(Integer, nullable=True)
 
 # --- Worker ---
 class WorkerEntry(Base):
@@ -131,6 +136,14 @@ class TaskEntry(Base):
         if result == 0:
             return -1  # there is no "0" killed retries, just no killed retries and we indicate that with -1
         return result
+    
+    @property
+    def runtime(self) -> float:
+        start_time = self.statuses[0].timestamp
+        end_time = self.statuses[-1].timestamp
+        if self.statuses[-1].status != TaskStatusEnum.COMPLETED:
+            return -1
+        return (end_time - start_time).total_seconds()
 
     @property
     def active_workers(self) -> int:

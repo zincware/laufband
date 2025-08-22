@@ -108,7 +108,7 @@ class Graphband(t.Generic[TaskTypeVar]):
         graph_fn: GraphTraversalProtocol[TaskTypeVar]
         | SizedGraphTraversalProtocol[TaskTypeVar],
         *,
-        lock: Lock = Lock(Path("graphband.lock").as_posix()),
+        lock: Lock = Lock("graphband.lock"),
         db: str = "sqlite:///graphband.sqlite",
         identifier: str | t.Callable = os.getpid,
         failure_policy: t.Literal["continue", "stop"] = os.getenv(
@@ -246,6 +246,10 @@ class Graphband(t.Generic[TaskTypeVar]):
         if self._iterator is None:
             raise ValueError("Iterator not initialized. Call __iter__() first.")
         return self._iterator
+    @property
+    def db(self) -> str:
+        """Return the database URL."""
+        return self._db
 
     def __iter__(self) -> Iterator[Task[TaskTypeVar]]:
         """The generator that handles the iteration logic."""
