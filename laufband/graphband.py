@@ -287,6 +287,18 @@ class Graphband(t.Generic[_T]):
                 continue
             with self.lock:
                 with Session(self._engine) as session:
+                    if self.failure_policy == "stop":
+                        non_compliant_tasks = set()
+                        for task_entry in session.query(TaskEntry).all():
+                            if task_entry.current_status.status not in [
+                                TaskStatusEnum.RUNNING,
+                                TaskStatusEnum.COMPLETED,
+                            ]:
+                                non_compliant_tasks.add(task_entry.id)
+                        if len(non_compliant_tasks) > 0:
+                            raise RuntimeError(
+                                f"Tasks '{non_compliant_tasks}' have failed"
+                            )
                     task_entry = session.get(TaskEntry, task.id)
                     if task_entry:
                         if task_entry.completed:

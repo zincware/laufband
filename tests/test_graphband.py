@@ -375,3 +375,22 @@ def test_sequential_task_with_labels_multi_label_worker(tmp_path):
         labels={"cpu", "gpu"},
     )
     assert len(list(worker)) == 10
+
+
+def test_failure_policy_stop(tmp_path):
+    """Test if failure policy stop works."""
+    worker = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        failure_policy="stop",
+    )
+    for item in worker:
+        if item.id == "task_5":
+            break  # counts as a failed job
+
+    # reiterating will raise an error, as there is one job
+    # in the database that has failed
+    with pytest.raises(RuntimeError):
+        for idx in worker:
+            pass
