@@ -266,6 +266,9 @@ class Graphband(t.Generic[_T]):
 
     def __iter__(self) -> Generator[Task, None, None]:
         """The generator that handles the iteration logic."""
+
+        self._close_trigger = False # reset close_trigger on new iter call
+
         iterator = tqdm((node for node in self.graph_fn), **self.tqdm_kwargs)
         if self.disabled:
             # If disabled, just iterate over the graph protocol
@@ -293,20 +296,32 @@ class Graphband(t.Generic[_T]):
                     )
                     task_entry.workers.append(worker)
                     task_entry.statuses.append(TaskStatusEntry(
-                        # task_id=task_entry.id,
                         status=TaskStatusEnum.RUNNING
                     ))
                     session.add(task_entry)
                     session.commit()
-            yield task
+            try:
+                yield task
+            except GeneratorExit:
+                with Session(self._engine) as session:
+                    task_entry = session.get(TaskEntry, task.id)
+                    if task_entry is None:
+                        raise ValueError(f"Task with id {task.id} not found.")
+                    task_entry.statuses.append(TaskStatusEntry(
+                        status=TaskStatusEnum.FAILED
+                    ))
+                    session.commit()
+                break
 
             with Session(self._engine) as session:
                 task_entry = session.get(TaskEntry, task.id)
-                if task_entry:
-                    task_entry.statuses.append(TaskStatusEntry(
-                        # task_id=task_entry.id,
-                        status=TaskStatusEnum.COMPLETED
-                    ))
-                    session.commit()
+                if task_entry is None:
+                    raise ValueError(f"Task with id {task.id} not found.")
+                task_entry.statuses.append(TaskStatusEntry(
+                    status=TaskStatusEnum.COMPLETED
+                ))
+                session.commit()
+            if self._close_trigger:
+                break
         self._thread_event.set()
         self._heartbeat_thread.join()

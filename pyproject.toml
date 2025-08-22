@@ -61,3 +61,8 @@ exclude = [
 
 [project.scripts]
 laufband = 'laufband.cli:main'
+
+[tool.pytest.ini_options]
+markers = [
+    "human_reviewed: mark test that has been reviewed by a human and should not be changed by automated tools, such as LLM agents",
+]
