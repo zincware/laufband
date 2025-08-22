@@ -1,450 +1,198 @@
-import contextlib
-import os
-import sqlite3
-import typing as t
-from collections.abc import Iterator
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
+from datetime import datetime
+from enum import StrEnum
+from typing import List
 
-T_STATE = t.Literal["running", "failed", "completed", "died"]
-# failed: the job failed with some exit code
-# died: the python process was killed and the worker could not update the
-#       state of the job. Detected by another worker updating the database
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+# from sqlalchemy.orm import MappedAsDataclass
 
 
-@dataclass
-class GraphbandDB:
-    """Graphband database interface for managing task progress and worker states.
+# --- Base class ---
+class Base(DeclarativeBase):
+    pass
 
-    Supports both sequential tasks (Laufband) and DAG tasks (Graphband).
 
-    Attributes
-    ----------
-    db_path : str | Path
-        Path to the SQLite database file.
-    worker : str
-        Unique identifier for the worker, defaults to the process ID.
-    heartbeat_timeout : int
-        Timeout in seconds to mark jobs as 'died' if the worker has not been seen.
-    max_died_retries : int
-        Number of retries for jobs that are marked as 'died'.
-    _worker_checked : bool
-        Internal flag to check if the worker has been registered.
-    """
+# --- Enums ---
+class WorkerStatus(StrEnum):
+    IDLE = "idle"
+    BUSY = "busy"
+    OFFLINE = "offline"
+    KILLED = "killed"
 
-    db_path: str | Path
-    worker: str = field(default_factory=lambda: str(os.getpid()))
-    heartbeat_timeout: int = 60
-    max_died_retries: int = 0
-    _worker_checked: bool = field(default=False, init=False)
 
-    def __post_init__(self):
-        if self.worker is None:
-            raise ValueError("Worker name must be set before iterating.")
+class TaskStatusEnum(StrEnum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    ABANDONED = "abandoned"
+    CANCELLED = "cancelled"
+    BLOCKED = "blocked"
+    KILLED = "killed"
 
-    def set_metadata(self, key: str, value: t.Any):
-        """Set a metadata key-value pair."""
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS metadata (
-                    key TEXT PRIMARY KEY,
-                    value TEXT
-                )
-            """
-            )
-            cursor.execute(
-                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
-                (key, str(value)),
-            )
-            conn.commit()
 
-    def get_metadata(self, key: str) -> Optional[str]:
-        """Get a metadata value by key."""
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute("SELECT value FROM metadata WHERE key = ?", (key,))
-                row = cursor.fetchone()
-                return row[0] if row else None
-            except sqlite3.OperationalError as e:
-                if "no such table" in str(e):
-                    return None
-                raise
+class WorkflowEntry(Base):
+    __tablename__ = "workflows"
 
-    def set_worker(self, worker_name: str):
-        """Set the worker name and reset worker checking state."""
-        self.worker = worker_name
-        self._worker_checked = False
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    total_tasks: Mapped[int] = mapped_column(Integer, nullable=True)
 
-    def __len__(self):
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM progress_table")
-            count = cursor.fetchone()[0]
-        return count
+    workers: Mapped[List["WorkerEntry"]] = relationship(back_populates="workflow")
+    tasks: Mapped[List["TaskEntry"]] = relationship(back_populates="workflow")
 
-    def __iter__(self) -> Iterator[str]:
-        """Iterate over the progress table, yielding job IDs.
 
-        This will check if the worker is already registered and update the worker state.
-        """
-        if not self._worker_checked:
-            with self.connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    SELECT worker FROM worker_table
-                    WHERE worker = ?
-                    """,
-                    (self.worker,),
-                )
-                if cursor.fetchone() is not None:
-                    raise ValueError(
-                        f"Worker with identifier '{self.worker}' already exists."
-                    )
-                else:
-                    self.update_worker(cursor)
-                    self.mark_died(cursor)
-                    conn.commit()
-            self._worker_checked = True
-        return self
+# --- Worker ---
+class WorkerEntry(Base):
+    __tablename__ = "workers"
 
-    def update_worker(self, cursor: sqlite3.Cursor):
-        # update if exists
-        cursor.execute(
-            """
-            UPDATE worker_table
-            SET last_seen = CURRENT_TIMESTAMP
-            WHERE worker = ?
-            """,
-            (self.worker,),
-        )
-        # insert if not exists
-        cursor.execute(
-            """
-            INSERT OR IGNORE INTO worker_table (worker)
-            VALUES (?)
-            """,
-            (self.worker,),
-        )
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    status: Mapped[WorkerStatus] = mapped_column(Enum(WorkerStatus))
 
-    def mark_died(self, cursor: sqlite3.Cursor):
-        """Mark jobs as died if the worker has not been seen in
-        the last `heartbeat_timeout` seconds."""
-        cursor.execute(
-            """
-            UPDATE progress_table
-            SET state = 'died'
-            WHERE state = 'running' AND worker IN (
-                SELECT worker FROM worker_table
-                WHERE last_seen < datetime('now', ?)
-            )
-            """,
-            (f"-{self.heartbeat_timeout} seconds",),
-        )
+    last_heartbeat: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    heartbeat_interval: Mapped[int] = mapped_column(Integer, default=30)
+    heartbeat_timeout: Mapped[int] = mapped_column(Integer, default=60)
 
-    def __next__(self) -> str:
-        """Get next available task ID for sequential processing."""
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE progress_table
-                SET state = 'running', worker = ?, count = count + 1
-                WHERE task_id = (
-                    SELECT task_id
-                    FROM progress_table
-                    WHERE (state IS NULL OR (state = 'died' AND count - 1 < ?))
-                    ORDER BY task_id
-                    LIMIT 1
-                )
-                RETURNING task_id
-                """,
-                (self.worker, self.max_died_retries),
-            )
-            row = cursor.fetchone()
+    labels: Mapped[List[str]] = mapped_column(JSON, default=list)
 
-            self.update_worker(cursor)
-            self.mark_died(cursor)
+    hostname: Mapped[str | None] = mapped_column(String, nullable=True)
+    pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
-            conn.commit()
+    workflow_id: Mapped[str] = mapped_column(ForeignKey("workflows.id"))
 
-            if row:
-                return row[0]
+    workflow: Mapped["WorkflowEntry"] = relationship(back_populates="workers")
+
+    # One worker can appear in many TaskStatusEntries
+    task_statuses: Mapped[List["TaskStatusEntry"]] = relationship(
+        back_populates="worker",
+    )
+
+    @property
+    def heartbeat_expired(self) -> bool:
+        """Check if the worker's heartbeat is expired."""
+        return (
+            datetime.now() - self.last_heartbeat
+        ).total_seconds() > self.heartbeat_timeout
+
+    @property
+    def running_tasks(self) -> set["TaskEntry"]:
+        """Get all running tasks for this worker."""
+        running_tasks = set()
+        for status in self.task_statuses:
+            if status.status == TaskStatusEnum.RUNNING:
+                running_tasks.add(status.task)
             else:
-                raise StopIteration
+                # remove if running has been outdated.
+                running_tasks.discard(status.task)
+        return running_tasks
 
-    def get_ready_task(self, graph, hash_fn: t.Callable[[t.Any], str]) -> Iterator[str]:
-        """Get next ready task that has all dependencies completed."""
-        with self.connect() as conn:
-            cursor = conn.cursor()
 
-            # Get all completed tasks and map them back to original nodes
-            cursor.execute(
-                "SELECT task_id FROM progress_table WHERE state = 'completed'"
-            )
-            completed_task_ids = {row[0] for row in cursor.fetchall()}
+# --- TaskStatusEntry ---
+class TaskStatusEntry(Base):
+    __tablename__ = "task_statuses"
 
-            # Process GraphTraversalProtocol
-            for node, predecessors in graph:
-                task_id = hash_fn(node)
-                predecessor_task_ids = {hash_fn(pred) for pred in predecessors}
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
 
-                if not predecessors or predecessor_task_ids.issubset(
-                    completed_task_ids
-                ):
-                    # Try to claim this task
-                    cursor.execute(
-                        """
-                        UPDATE progress_table
-                        SET state = 'running', worker = ?, count = count + 1
-                        WHERE task_id = ? AND
-                        (
-                            state = 'pending'
-                            OR
-                            (state = 'died' AND count - 1 < ?)
-                        )
-                        RETURNING task_id
-                        """,
-                        (self.worker, task_id, self.max_died_retries),
-                    )
-                    row = cursor.fetchone()
-                    if row:
-                        self.update_worker(cursor)
-                        self.mark_died(cursor)
-                        conn.commit()
-                        yield row[0]
-                        return
+    status: Mapped[TaskStatusEnum] = mapped_column(Enum(TaskStatusEnum))
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
-            self.update_worker(cursor)
-            self.mark_died(cursor)
-            conn.commit()
-            return
+    # new: one worker per status
+    worker_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workers.id"), nullable=True
+    )
+    worker: Mapped[WorkerEntry] = relationship(back_populates="task_statuses")
 
-    @contextlib.contextmanager
-    def connect(self):
-        conn = sqlite3.connect(self.db_path)
-        try:
-            yield conn
-        finally:
-            conn.close()
+    task: Mapped["TaskEntry"] = relationship(back_populates="statuses")
 
-    def create_empty(self):
-        """Create empty database with tables."""
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE progress_table (
-                    task_id TEXT PRIMARY KEY,
-                    state TEXT DEFAULT 'pending',
-                    worker TEXT,
-                    count INTEGER DEFAULT 0
-                )
-            """)
 
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS dependencies (
-                    task_id TEXT,
-                    predecessor_id TEXT,
-                    PRIMARY KEY (task_id, predecessor_id),
-                    FOREIGN KEY (task_id) REFERENCES progress_table (task_id),
-                    FOREIGN KEY (predecessor_id) REFERENCES progress_table (task_id)
-                )
-            """)
+# --- TaskEntry ---
+class TaskEntry(Base):
+    __tablename__ = "tasks"
 
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS worker_table (
-                    worker TEXT PRIMARY KEY,
-                    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.commit()
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    requirements: Mapped[List[str]] = mapped_column(JSON, default=list)
 
-    def add_task(self, task_id: str, predecessor_ids: set[str]):
-        """Add a single task with its dependencies."""
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            # Only add dependencies - don't add to progress_table until task is claimed
-            for predecessor_id in predecessor_ids:
-                cursor.execute(
-                    """
-                    INSERT OR IGNORE INTO dependencies (task_id, predecessor_id)
-                    VALUES (?, ?)
-                    """,
-                    (task_id, predecessor_id),
-                )
-            conn.commit()
+    workflow_id: Mapped[str] = mapped_column(ForeignKey("workflows.id"))
 
-    def finalize(self, task_id: str, state: T_STATE = "completed"):
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE progress_table
-                SET state = ?
-                WHERE task_id = ?
-                """,
-                (state, task_id),
-            )
-            conn.commit()
+    workflow: Mapped["WorkflowEntry"] = relationship(back_populates="tasks")
 
-    def list_state(self, state: T_STATE) -> list[str]:
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT task_id FROM progress_table
-                WHERE state = ?
-                """,
-                (state,),
-            )
-            rows = cursor.fetchall()
-        return [row[0] for row in rows]
+    statuses: Mapped[List[TaskStatusEntry]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+        order_by="TaskStatusEntry.timestamp",
+    )
 
-    def get_worker(self, task_id: str) -> Optional[str]:
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT worker FROM progress_table
-                WHERE task_id = ?
-                """,
-                (task_id,),
-            )
-            row = cursor.fetchone()
-        return row[0] if row else None
+    max_parallel_workers: Mapped[int] = mapped_column(Integer, default=1)
 
-    def get_job_stats(self) -> dict[str, int]:
-        """Get counts of jobs in each state"""
-        stats = {}
-        states: list[str] = ["running", "failed", "completed", "died", "pending"]
+    @property
+    def current_status(self) -> TaskStatusEntry:
+        return self.statuses[-1]
 
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            for state in states:
-                if state == "pending":
-                    cursor.execute(
-                        "SELECT COUNT(*) FROM progress_table "
-                        "WHERE state = 'pending' OR state IS NULL"
-                    )
-                else:
-                    cursor.execute(
-                        "SELECT COUNT(*) FROM progress_table WHERE state = ?", (state,)
-                    )
-                stats[state] = cursor.fetchone()[0]
+    @property
+    def failed_retries(self) -> int:
+        result = sum(1 for x in self.statuses if x.status == TaskStatusEnum.FAILED)
+        if result == 0:
+            # there is no "0" failed retries, just no failed retries and we
+            # indicate that with -1
+            return -1
+        return result
 
-        return stats
+    @property
+    def killed_retries(self) -> int:
+        result = sum(1 for x in self.statuses if x.status == TaskStatusEnum.KILLED)
+        if result == 0:
+            # there is no "0" killed retries, just no killed retries and we
+            # indicate that with -1
+            return -1
+        return result
 
-    def get_worker_info(self) -> list[dict]:
-        """Get information about all workers with their job statistics"""
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT
-                    w.worker,
-                    w.last_seen,
-                    COUNT(CASE WHEN p.state = 'running' THEN 1 END) as active_jobs,
-                    COUNT(CASE WHEN p.state = 'completed' THEN 1 END) as completed_jobs,
-                    COUNT(CASE WHEN p.state = 'failed' THEN 1 END) as failed_jobs,
-                    MAX(p.count) as max_retries
-                FROM worker_table w
-                LEFT JOIN progress_table p ON w.worker = p.worker
-                GROUP BY w.worker, w.last_seen
-                ORDER BY w.last_seen DESC
-            """)
+    @property
+    def runtime(self) -> float:
+        start_time = self.statuses[0].timestamp
+        end_time = self.statuses[-1].timestamp
+        if self.statuses[-1].status != TaskStatusEnum.COMPLETED:
+            return -1
+        return (end_time - start_time).total_seconds()
 
-            workers = []
-            for row in cursor.fetchall():
-                (
-                    worker,
-                    last_seen,
-                    active_jobs,
-                    completed_jobs,
-                    failed_jobs,
-                    max_retries,
-                ) = row
-                workers.append(
-                    {
-                        "worker": worker,
-                        "last_seen": last_seen,
-                        "active_jobs": active_jobs or 0,
-                        "completed_jobs": completed_jobs or 0,
-                        "failed_jobs": failed_jobs or 0,
-                        "processed_jobs": (completed_jobs or 0) + (failed_jobs or 0),
-                        "max_retries": max_retries or 0,
-                    }
-                )
+    @property
+    def active_workers(self) -> int:
+        running_workers = set()
+        for status in self.statuses:
+            if status.status == TaskStatusEnum.RUNNING:
+                running_workers.add(status.worker_id)
+            else:
+                # discard workers that, e.g. died while running
+                running_workers.discard(status.worker_id)
+        return len(running_workers)
 
-        return workers
+    @property
+    def worker_availability(self) -> bool:
+        running_workers = set()
+        for status in self.statuses:
+            if status.worker_id is None:
+                continue
+            if status.status == TaskStatusEnum.RUNNING:
+                running_workers.add(status.worker_id)
+            elif status.status == TaskStatusEnum.COMPLETED:
+                if status.worker_id in running_workers:
+                    # a worker has successfully completed and
+                    #  no new workers should be picked up
+                    return False
+            else:
+                # discard workers that, e.g. died while running
+                running_workers.discard(status.worker_id)
+        return len(running_workers) < self.max_parallel_workers
 
-    def claim_task(self, task_id: str) -> str | None:
-        """Claim a task by setting it as running for this worker.
-
-        Returns the task_id if successfully claimed, None otherwise.
-        """
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT OR IGNORE INTO progress_table (task_id, state, worker, count)
-                VALUES (?, 'running', ?, 1)
-                RETURNING task_id
-                """,
-                (task_id, self.worker),
-            )
-            row = cursor.fetchone()
-            if row:
-                self.update_worker(cursor)
-                conn.commit()
-                return row[0]
-            return None
-
-    def find_ready_died_task(self) -> str | None:
-        """Find a died task that has all dependencies completed and can be retried."""
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            # Find tasks that are died and have all dependencies completed
-            cursor.execute(
-                """
-                SELECT pt.task_id
-                FROM progress_table pt
-                WHERE pt.state = 'died' AND pt.count - 1 < ?
-                AND NOT EXISTS (
-                    SELECT 1 FROM dependencies d
-                    JOIN progress_table dep_pt ON d.predecessor_id = dep_pt.task_id
-                    WHERE d.task_id = pt.task_id AND dep_pt.state != 'completed'
-                )
-                LIMIT 1
-                """,
-                (self.max_died_retries,),
-            )
-            row = cursor.fetchone()
-            if row:
-                return row[0]
-            return None
-
-    def claim_died_task(self, task_id: str) -> str | None:
-        """Try to claim a died task by updating it to running state.
-
-        Returns the task_id if successfully claimed, None otherwise.
-        """
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE progress_table
-                SET state = 'running', worker = ?, count = count + 1
-                WHERE task_id = ? AND state = 'died' AND count - 1 < ?
-                RETURNING task_id
-                """,
-                (self.worker, task_id, self.max_died_retries),
-            )
-            row = cursor.fetchone()
-            if row:
-                self.update_worker(cursor)
-                conn.commit()
-                return row[0]
-            return None
+    @property
+    def completed(self) -> bool:
+        if self.active_workers > 0:
+            return False
+        return self.current_status.status == TaskStatusEnum.COMPLETED

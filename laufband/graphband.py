@@ -1,19 +1,50 @@
-import hashlib
+import logging
 import os
+import socket
+import threading
 import typing as t
-from collections.abc import Callable, Generator, Iterator
-from contextlib import nullcontext
-from pathlib import Path
+from collections.abc import Iterator
+from contextlib import ExitStack, nullcontext
+from itertools import chain
 
 from flufl.lock import Lock
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 from tqdm import tqdm
 
-from laufband.db import GraphbandDB
+from laufband.db import (
+    Base,
+    TaskEntry,
+    TaskStatusEntry,
+    TaskStatusEnum,
+    WorkerEntry,
+    WorkerStatus,
+    WorkflowEntry,
+)
+from laufband.heartbeat import heartbeat
+from laufband.task import Task, TaskTypeVar
 
-_T = t.TypeVar("_T", covariant=True)
+log = logging.getLogger(__name__)
 
 
-class GraphTraversalProtocol(t.Protocol):
+class MultiLock:
+    """Context manager that acquires multiple locks at once."""
+
+    def __init__(self, *locks: t.Union[Lock, threading.Lock, nullcontext]):
+        self._locks = locks
+        self._stack = ExitStack()
+
+    def __enter__(self):
+        for lock in self._locks:
+            self._stack.enter_context(lock)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # ExitStack handles releasing in reverse order
+        return self._stack.__exit__(exc_type, exc_val, exc_tb)
+
+
+class GraphTraversalProtocol(t.Protocol[TaskTypeVar]):
     """Protocol for iterating over a graph's nodes and their predecessors.
 
     Yields
@@ -26,77 +57,74 @@ class GraphTraversalProtocol(t.Protocol):
     >>> g = nx.DiGraph()
     >>> g.add_edges_from([("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")])
     >>> for node in nx.topological_sort(g):
-    ...     yield (node, set(g.predecessors(node)))
+    ...     yield Task(id=node, dependencies=set(g.predecessors(node)))
     """
 
-    def __iter__(self) -> Iterator[tuple[str, set[str]]]: ...
-
-    def __len__(self) -> int:
-        raise TypeError(f"{type(self).__name__} does not implement __len__")
+    def __iter__(self) -> Iterator[Task[TaskTypeVar]]: ...
 
 
-def _check_disabled(func: t.Callable) -> t.Callable:
-    """Decorator to raise an error if Graphband is disabled."""
+class SizedGraphTraversalProtocol(GraphTraversalProtocol[TaskTypeVar]):
+    """
+    Protocol for graph traversal that also supports __len__.
 
-    def wrapper(self, *args, **kwargs):
-        if self.disabled:
-            raise RuntimeError("Graphband is disabled. Cannot call this method.")
-        return func(self, *args, **kwargs)
+    Extends
+    -------
+    GraphTraversalProtocol
 
-    return wrapper
+    Methods
+    -------
+    __len__() -> int
+        Return the number of nodes in the graph.
+
+    Example
+    -------
+    >>> class MyGraph(SizedGraphTraversalProtocol):
+    ...     def __iter__(self):
+    ...         yield from [
+    ...             Task(id="A", dependencies=set()),
+    ...             Task(id="B", dependencies={"A"})
+    ...         ]
+    ...     def __len__(self):
+    ...         return 2
+    """
+
+    def __len__(self) -> int: ...
 
 
-def _default_hash_fn(item: t.Any) -> str:
-    """Default hash function for tasks (deterministic across processes)."""
-    return hashlib.sha256(str(item).encode()).hexdigest()
-
-
-class Graphband(t.Generic[_T]):
+class Graphband(t.Generic[TaskTypeVar]):
     def __init__(
         self,
-        graph_fn: GraphTraversalProtocol,
+        graph_fn: GraphTraversalProtocol[TaskTypeVar]
+        | SizedGraphTraversalProtocol[TaskTypeVar],
         *,
-        hash_fn: Callable[[_T], str] | None = None,
-        lock: Lock | None = None,
-        lock_path: Path | str | None = None,
-        com: Path | str | None = None,
-        identifier: str | t.Callable | None = None,
-        cleanup: bool = False,
-        failure_policy: t.Literal["continue", "stop"] = "continue",
-        heartbeat_timeout: int | None = None,
-        max_died_retries: int | None = None,
-        disable: bool | None = None,
+        lock: Lock = Lock("graphband.lock"),
+        db: str = "sqlite:///graphband.sqlite",
+        identifier: str | t.Callable = os.getpid,
+        failure_policy: t.Literal["continue", "stop"] = os.getenv(
+            "LAUFBAND_FAILURE_POLICY", "continue"
+        ),
+        heartbeat_timeout: int = int(os.getenv("LAUFBAND_HEARTBEAT_TIMEOUT", 60)),
+        heartbeat_interval: int = int(os.getenv("LAUFBAND_HEARTBEAT_INTERVAL", 30)),
+        max_killed_retries: int = int(os.getenv("LAUFBAND_MAX_KILLED_RETRIES", 0)),
+        max_failed_retries: int = int(os.getenv("LAUFBAND_MAX_FAILED_RETRIES", 0)),
+        disabled: bool = bool(int(os.getenv("LAUFBAND_DISABLED", "0"))),
         tqdm_kwargs: dict[str, t.Any] | None = None,
+        labels: set[str] | None = None,
     ):
         """Graphband generator for parallel processing of DAGs using file-based locking.
 
         Arguments
         ---------
         graph_fn : GraphTraversalProtocol
-            Object that implements the GraphTraversalProtocol, yielding tuples of
-            (node, predecessors) for graph traversal. Nodes are tasks and must be
-            hashable.
-
-        hash_fn : Callable[[Any], str] | None
-            Function to compute task IDs from graph nodes. If None, uses a default
-            hash function. For UUID-mapped items, this should operate on the UUID keys.
-        lock : Lock | None
-            A lock object to ensure thread safety. If None, a new lock will be created.
-        lock_path : Path | str | None
-            The path to the lock file used for synchronization.
-            Defaults to "graphband.lock".
-        com : Path | str | None
-            The path to the db file used to store the state.
-            If given, the file will not be removed.
-            If not provided, a file named "graphband.sqlite" will be
-            used and removed after completion.
+        lock : Lock
+            A lock object to ensure thread safety.
+        db : str
+            The database connection string. Defaults to "sqlite:///graphband.sqlite".
         identifier : str | callable, optional
             A unique identifier for the worker. If not set, the process ID will be used.
             If a callable is provided, it will be called to generate the identifier.
             Must be unique across all workers. Can be set via the environment variable
             ``LAUFBAND_IDENTIFIER``.
-        cleanup : bool
-            If True, the database file will be removed after processing is complete.
         failure_policy : str
             If an error occurs, the generator will always yield that error.
             With the "continue" policy, other processes will continue,
@@ -113,59 +141,84 @@ class Graphband(t.Generic[_T]):
             If set to 0, no retries will be attempted.
             Defaults to 0 or the value of the environment variable
             ``LAUFBAND_MAX_DIED_RETRIES`` if set.
-        disable : bool
+        disabled : bool
             If True, disable Graphband features and return a simple iterator.
             Can also be set via the environment variable
             ``LAUFBAND_DISABLE``.
         tqdm_kwargs : dict
             Additional arguments to pass to tqdm.
         """
-        if heartbeat_timeout is None:
-            heartbeat_timeout = int(os.getenv("LAUFBAND_HEARTBEAT_TIMEOUT", 60 * 60))
-        if max_died_retries is None:
-            max_died_retries = int(os.getenv("LAUFBAND_MAX_DIED_RETRIES", 0))
-        if identifier is None:
-            identifier = os.getenv("LAUFBAND_IDENTIFIER", str(os.getpid()))
-        if lock_path is not None and lock is not None:
-            raise ValueError(
-                "You cannot set both `lock` and `lock_path`. Use one or the other."
-            )
-        if disable is None:
-            self.disabled = os.getenv("LAUFBAND_DISABLE", "0") == "1"
-        else:
-            self.disabled = disable
-
-        if lock_path is None:
-            lock_path = "graphband.lock"
-
-        self.graph_fn = graph_fn
-        self.hash_fn = hash_fn or _default_hash_fn
-
-        if self.disabled:
-            self.lock = nullcontext()
-        else:
-            self.lock = lock if lock is not None else Lock(Path(lock_path).as_posix())
-        self.com = Path(com or "graphband.sqlite")
-
-        if callable(identifier):
-            self.db = GraphbandDB(
-                self.com,
-                worker=identifier(),
-                heartbeat_timeout=heartbeat_timeout,
-                max_died_retries=max_died_retries,
-            )
-        else:
-            self.db = GraphbandDB(
-                self.com,
-                worker=identifier,
-                heartbeat_timeout=heartbeat_timeout,
-                max_died_retries=max_died_retries,
-            )
-        self.cleanup = cleanup
-        self.tqdm_kwargs = tqdm_kwargs or {}
-
+        self.disabled = disabled
+        self.graph_fn: GraphTraversalProtocol[TaskTypeVar] = graph_fn
+        self._lock = lock if not disabled else nullcontext()
         self._close_trigger = False
         self.failure_policy = failure_policy
+        self.tqdm_kwargs = tqdm_kwargs or {}
+        self._identifier = identifier() if callable(identifier) else identifier
+        self._max_failed_retries = max_failed_retries
+        self._max_killed_retries = max_killed_retries
+        self._db = db
+        # here we keep track of failed job data to be retried later
+        self._failed_job_cache = {}
+        self._iterator = None
+        self._heartbeat_timeout = heartbeat_timeout
+        self._heartbeat_interval = heartbeat_interval
+        self._labels = frozenset(labels or [])
+
+        if not self.disabled:
+            # we need to lock between threads and workers,
+            # because the worker and heartbeat will share the same pid.
+            # thread-lock MUST be the first lock to be passed!
+            self._thread_lock = threading.Lock()
+            self.lock = MultiLock(self._thread_lock, self._lock)
+            self._engine = create_engine(self._db, echo=False)
+            self._register_worker()
+            self._thread_event = threading.Event()
+            self._heartbeat_thread = threading.Thread(
+                target=heartbeat,
+                args=(self.lock, self._db, self._identifier, self._thread_event),
+                daemon=True,
+            )
+            self._heartbeat_thread.start()
+        else:
+            self.lock = MultiLock(self._lock)
+
+    def _register_worker(self):
+        """Register the worker with the database."""
+        with self.lock:
+            Base.metadata.create_all(self._engine)
+            with Session(self._engine) as session:
+                # check if a worker with the given identifier already exists
+                if session.get(WorkerEntry, self._identifier) is not None:
+                    raise ValueError("Worker with this identifier already exists")
+                workflow = (
+                    session.query(WorkflowEntry)
+                    .filter(WorkflowEntry.id == "main")
+                    .first()
+                )
+                if workflow is None:
+                    try:
+                        size = len(self.graph_fn)
+                    except TypeError:
+                        size = None
+                    workflow = WorkflowEntry(id="main", total_tasks=size)
+                    session.add(workflow)
+                worker_entry = WorkerEntry(
+                    id=self._identifier,
+                    status=WorkerStatus.IDLE,
+                    hostname=socket.gethostname(),
+                    pid=os.getpid(),
+                    heartbeat_interval=self._heartbeat_interval,
+                    heartbeat_timeout=self._heartbeat_timeout,
+                    labels=list(self.labels),
+                    workflow=workflow,
+                )
+                session.add(worker_entry)
+                session.commit()
+
+    def __del__(self):
+        if hasattr(self, "_thread_event"):
+            self._thread_event.set()
 
     def close(self):
         """Exit out of the graphband generator.
@@ -185,199 +238,174 @@ class Graphband(t.Generic[_T]):
     @property
     def identifier(self) -> str:
         """Unique identifier of this worker"""
-        return self.db.worker
+        return self._identifier
 
     @property
-    @_check_disabled
-    def completed(self) -> list[str]:
-        """Return the task IDs that have been completed."""
-        with self.lock:
-            return self.db.list_state("completed")
+    def labels(self) -> frozenset[str]:
+        """Frozenset of labels associated with this worker"""
+        return self._labels
 
     @property
-    @_check_disabled
-    def failed(self) -> list[str]:
-        """Return the task IDs that have failed processing."""
-        with self.lock:
-            return self.db.list_state("failed")
+    def iterator(self) -> tqdm:
+        """Return the tqdm iterator for the graph."""
+        if self._iterator is None:
+            raise ValueError("Iterator not initialized. Call __iter__() first.")
+        return self._iterator
 
     @property
-    @_check_disabled
-    def running(self) -> list[str]:
-        """Return the task IDs that are currently being processed."""
-        with self.lock:
-            return self.db.list_state("running")
+    def db(self) -> str:
+        """Return the database URL."""
+        return self._db
 
-    @property
-    @_check_disabled
-    def died(self) -> list[str]:
-        """Return the task IDs that have been marked as 'died'."""
-        with self.lock:
-            return self.db.list_state("died")
-
-    def __iter__(self) -> Generator[_T, None, None]:
+    def __iter__(self) -> Iterator[Task[TaskTypeVar]]:
         """The generator that handles the iteration logic."""
+
+        self._close_trigger = False  # reset close_trigger on new iter call
+
+        self._iterator = tqdm(
+            (
+                node
+                for node in chain(list(self._failed_job_cache.values()), self.graph_fn)
+            ),
+            **self.tqdm_kwargs,
+        )
+        try:
+            self._iterator.total = len(self.graph_fn) + len(self._failed_job_cache)
+        except TypeError:
+            pass
         if self.disabled:
-            # For disabled mode, iterate over the graph protocol
-            yield from tqdm((node for node, _ in self.graph_fn), **self.tqdm_kwargs)
+            # If disabled, just iterate over the graph protocol
+            yield from self._iterator
             return
 
-        # Initialize lazy consumption state
-        node_mapping = {}  # task_id -> node object
-        graph_iterator = iter(self.graph_fn)
-        graph_exhausted = False
-        tbar = None  # Will be initialized once we know total tasks
-
-        with self.lock:
-            # Initialize database if it doesn't exist
-            if not self.com.exists():
-                self.db.create_empty()
-                try:
-                    total_tasks = len(self.graph_fn)
-                    self.db.set_metadata("total_tasks", total_tasks)
-                except (TypeError, AttributeError):
-                    pass  # No length available
-
-        while True:
-            task_id = None
-            should_return = False
-
-            with self.lock:
-                # Check for stop conditions
-                if self.failure_policy == "stop" and self.db.list_state("failed"):
-                    raise RuntimeError(
-                        "Another worker has failed. "
-                        "Stopping due to failure_policy='stop'."
-                    )
-
-                # Try to find a ready task from what we already know
-                task_id = self._find_ready_task()
-
-                # If no ready task found and generator not exhausted, consume more
-                while task_id is None and not graph_exhausted:
-                    (
-                        claimed_task_id,
-                        exhausted,
-                    ) = self._process_next_task_from_graph(graph_iterator, node_mapping)
-                    graph_exhausted = exhausted
-                    if exhausted:
-                        break
-
-                    if claimed_task_id:
-                        task_id = claimed_task_id
-                        break
-
-                    # If not ready, try to find another ready task from DB
-                    task_id = self._find_ready_task()
-
-                # If still no task, it means graph is exhausted and nothing is ready
-                if task_id is None and graph_exhausted:
-                    # Check if we're completely done
-                    completed = self.db.list_state("completed")
-                    total_tasks = len(self.db)
-                    if len(completed) == total_tasks:
-                        if self.cleanup:
-                            self.com.unlink()
-                        if tbar:
-                            tbar.close()
-                        should_return = True
-
-            if should_return:
-                return
-
-            if task_id is None:
-                # No task found, and we are not done yet.
-                # This means other workers are busy or there is a deadlock.
-                # The original code would break the main loop.
-                break
-
-            # Initialize progress bar if not done yet
-            if tbar is None:
-                try:
-                    total_tasks = len(self.graph_fn)  # type: ignore
-                except (TypeError, AttributeError):
-                    total_tasks = None  # Unknown total, will update dynamically
-                tbar = tqdm(total=total_tasks, **self.tqdm_kwargs)
-
-            # Update progress bar
-            completed = self.db.list_state("completed")
-            if tbar.total is None:
-                # Update total dynamically as we discover tasks
-                tbar.total = len(self.db)
-            tbar.n = len(completed)
-            tbar.refresh()
-
-            # Get the actual task object
-            task_item = node_mapping.get(task_id)
-            if task_item is None:
-                # This shouldn't happen, but handle gracefully
-                with self.lock:
-                    self.db.finalize(task_id, "failed")
+        for task in self._iterator:
+            if not task.requirements.issubset(self.labels):
+                log.debug(
+                    f"Task {task.id} requires labels {task.requirements}, "
+                    f"skipping worker {self.identifier} with labels: {self.labels}"
+                )
                 continue
-
-            try:
-                yield task_item
-            except GeneratorExit:
-                with self.lock:
-                    self.db.finalize(task_id, "failed")
-                raise
-
-            if tbar:
-                tbar.update(1)
-
             with self.lock:
-                # After processing, mark as completed
-                self.db.finalize(task_id, "completed")
+                with Session(self._engine) as session:
+                    if self.failure_policy == "stop":
+                        non_compliant_tasks = set()
+                        for task_entry in session.query(TaskEntry).all():
+                            if task_entry.current_status.status not in [
+                                TaskStatusEnum.RUNNING,
+                                TaskStatusEnum.COMPLETED,
+                            ]:
+                                non_compliant_tasks.add(task_entry.id)
+                        if len(non_compliant_tasks) > 0:
+                            raise RuntimeError(
+                                f"Tasks '{non_compliant_tasks}' have failed"
+                            )
 
-                # Check if we're done (only when graph is exhausted)
-                completed = self.db.list_state("completed")
-                total_tasks = len(self.db)
-                if len(completed) == total_tasks and graph_exhausted:
-                    if self.cleanup:
-                        self.com.unlink()
-                    if tbar:
-                        tbar.close()
-                    return
+                    # check dependencies
+                    skip_task = False
+                    for dep in task.dependencies:
+                        dep_entry = (
+                            session.query(TaskEntry).filter(TaskEntry.id == dep).first()
+                        )
+                        if dep_entry is None:
+                            log.debug(
+                                f"Dependency {dep} not found, skipping task {task.id}."
+                            )
+                            skip_task = True
+                            break
+                        elif not dep_entry.completed:
+                            log.debug(
+                                f"Dependency {dep} not completed, "
+                                f"skipping task {task.id}."
+                            )
+                            skip_task = True
+                            break
+                    if skip_task:
+                        self._failed_job_cache[task.id] = task
+                        continue
 
+                    task_entry = session.get(TaskEntry, task.id)
+                    if task_entry:
+                        if task_entry.completed:
+                            log.debug(f"Task {task.id} already completed, skipping.")
+                            continue
+                        if task_entry.failed_retries >= self._max_failed_retries:
+                            log.debug(
+                                f"Task {task.id} has failed too many times, skipping."
+                            )
+                            continue
+                        if task_entry.killed_retries >= self._max_killed_retries:
+                            log.debug(
+                                f"Task {task.id} has died too many times, skipping."
+                            )
+                            continue
+                        if not task_entry.worker_availability:
+                            log.debug(f"Task {task.id} has no free workers, skipping.")
+                            continue
+                    else:
+                        log.debug(f"Registering task {task.id} in database.")
+                        workflow = (
+                            session.query(WorkflowEntry)
+                            .filter(WorkflowEntry.id == "main")
+                            .first()
+                        )
+                        if workflow is None:
+                            raise ValueError("Workflow 'main' not found.")
+                        task_entry = TaskEntry(
+                            id=task.id,
+                            # dependencies=task.dependencies,
+                            requirements=list(task.requirements),
+                            max_parallel_workers=task.max_parallel_workers,
+                            workflow=workflow,
+                        )
+                        session.add(task_entry)
+                    worker = session.get(WorkerEntry, self._identifier)
+                    if worker is None:
+                        raise ValueError(
+                            f"Worker with identifier {self._identifier} not found."
+                        )
+                    task_entry.statuses.append(
+                        TaskStatusEntry(status=TaskStatusEnum.RUNNING, worker=worker)
+                    )
+                    worker.status = WorkerStatus.BUSY
+                    session.add(task_entry)
+                    session.commit()
+            try:
+                yield task
+                self._failed_job_cache.pop(task.id, None)
+            except GeneratorExit:
+                self._failed_job_cache[task.id] = task
+                with self.lock:
+                    with Session(self._engine) as session:
+                        task_entry = session.get(TaskEntry, task.id)
+                        if task_entry is None:
+                            raise ValueError(f"Task with id {task.id} not found.")
+                        task_entry.statuses.append(
+                            TaskStatusEntry(status=TaskStatusEnum.FAILED, worker=worker)
+                        )
+                        worker = session.get(WorkerEntry, self._identifier)
+                        if worker is None:
+                            raise ValueError(
+                                f"Worker with id {self._identifier} not found."
+                            )
+                        worker.status = WorkerStatus.IDLE
+                        session.commit()
+                    break
+            with self.lock:
+                with Session(self._engine) as session:
+                    task_entry = session.get(TaskEntry, task.id)
+                    if task_entry is None:
+                        raise ValueError(f"Task with id {task.id} not found.")
+                    task_entry.statuses.append(
+                        TaskStatusEntry(status=TaskStatusEnum.COMPLETED, worker=worker)
+                    )
+                    worker = session.get(WorkerEntry, self._identifier)
+                    if worker is None:
+                        raise ValueError(
+                            f"Worker with id {self._identifier} not found."
+                        )
+                    worker.status = WorkerStatus.IDLE
+                    session.commit()
             if self._close_trigger:
-                self._close_trigger = False
                 break
-
-        if tbar:
-            tbar.close()
-
-    def _process_next_task_from_graph(
-        self,
-        graph_iterator: Iterator[tuple[_T, set[_T]]],
-        node_mapping: dict[str, _T],
-    ) -> tuple[str | None, bool]:
-        """
-        Gets next task from graph, adds to DB, and if ready, claims it.
-        Returns (claimed_task_id | None, graph_exhausted)
-        """
-        try:
-            node, predecessors = next(graph_iterator)
-        except StopIteration:
-            return None, True
-
-        candidate_task_id = self.hash_fn(node)
-        node_mapping[candidate_task_id] = node
-
-        predecessor_task_ids = {self.hash_fn(pred) for pred in predecessors}
-        self.db.add_task(candidate_task_id, predecessor_task_ids)
-
-        completed_task_ids = set(self.db.list_state("completed"))
-        if not predecessors or predecessor_task_ids.issubset(completed_task_ids):
-            task_id = self.db.claim_task(candidate_task_id)
-            return task_id, False
-
-        return None, False
-
-    def _find_ready_task(self) -> str | None:
-        """Find a ready task from existing database entries."""
-        # Find a died task that can be retried
-        task_id = self.db.find_ready_died_task()
-        if task_id:
-            # Try to claim it
-            return self.db.claim_died_task(task_id)
-        return None
+        self._thread_event.set()
+        self._heartbeat_thread.join()

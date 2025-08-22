@@ -43,7 +43,7 @@ output_file = Path("data.json")
 output_file.write_text(json.dumps({"processed_data": []}))
 data = list(range(100))
 
-worker = Laufband(data, desc="using Laufband")
+worker = Laufband(data, tqdm_kwargs={"desc": "using Laufband"})
 
 for item in worker:
     # Simulate some computationally intensive task
@@ -130,7 +130,8 @@ worker = Laufband(list(s22))
 
 for atoms in worker:
     atoms.calc = calc
-    atoms.get_potential_energy()
+    energy = atoms.get_potential_energy()
+    worker.iterator.set_description(f"{energy = }")
     with worker.lock:
         ase.io.write("frames.xyz", atoms, append=True)
 ```
@@ -139,3 +140,87 @@ You can use the `laufband watch` to follow the progress across all active worker
 
 ![Laufband CLI](https://github.com/user-attachments/assets/e3c8c345-994c-4b97-b3a3-7a14e460240b#gh-dark-mode-only "Laufband CLI")
 ![Laufband CLI](https://github.com/user-attachments/assets/1c07c641-add7-4c48-89f8-8da67a8061d1#gh-light-mode-only "Laufband CLI")
+
+
+# Graphband
+
+Laufband supports dependency-aware tasks through `laufband.Graphband`.
+To use this, provide an iterator that yields tasks in a valid execution order.
+
+> [!NOTE]
+> `laufband.Laufband` effectively uses a directed graph with no edges as the input to `laufband.Graphband`.
+
+```py
+import networkx as nx
+from laufband import Task
+
+def graph_tasks():
+    digraph = nx.DiGraph()
+    edges = [
+        ("a", "b"),
+        ("a", "c"),
+        ("b", "d"),
+        ("b", "e"),
+        ("c", "f"),
+        ("c", "g"),
+    ]
+    digraph.add_edges_from(edges)
+    for node in nx.topological_sort(digraph):
+        yield Task(
+            id=node,  # unique string representation of the task
+            data=node, # optional data associated with the task
+            dependencies=digraph.predecessors(node), # dependencies of the task
+        )
+```
+Given this generator, you can iterate the graph in parallel using `laufband.Graphband`.
+
+> [!WARNING]
+> Once `laufband.Graphband` has executed a task, it will not re-execute it, even if a dependency is added later on.
+
+```py
+from laufband import Graphband
+
+worker = Graphband(graph_tasks())
+
+for task in worker:
+    print(task.id, task.data)
+```
+
+# Labels, Requirements, and Multiple Workers per Task
+
+You can assign requirements to your tasks and labels to workers to control their execution.
+
+```py
+from laufband import Task, Graphband
+
+def iterator():
+    yield Task(id="task1")
+    yield Task(id="task2", requirements={"gpu"})
+
+w1 = Graphband(iterator(), identifier="w1")
+w2 = Graphband(iterator(), identifier="w2", labels={"gpu"})
+
+print([x.id for x in w1])
+# ["task1"]
+print([x.id for x in w2])
+# ["task2"]
+```
+
+Sometimes a task supports internal parallel execution (e.g., nested use of `laufband`). In such a case, you can assign multiple workers to one task.
+
+> [!NOTE]
+> Keep in mind that `laufband` does not actually schedule the execution. The number of available workers per task depends on how many workers are spawned.
+
+```py
+from laufband import Task, Graphband
+
+def iterator():
+    yield Task(id="task1", max_parallel_workers=2)
+    # At most 2 workers will be assigned to this job until both successfully finish.
+
+worker = Graphband(iterator())
+
+for item in worker:
+    # Code that can be executed multiple times, e.g., via laufband itself.
+    ...
+```

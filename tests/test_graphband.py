@@ -1,344 +1,448 @@
-import multiprocessing as mp
-import random
+import multiprocessing
+import os
 import time
-import uuid
-from pathlib import Path
+import typing as t
 
 import networkx as nx
+import pytest
+from flufl.lock import Lock
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
-from laufband import Graphband
+from laufband import Graphband, GraphTraversalProtocol, Task
+from laufband.db import TaskEntry, TaskStatusEnum, WorkerEntry, WorkerStatus
 
 
-def simple_graph():
-    g = nx.DiGraph()
-    g.add_edges_from(
-        [
-            ("A", "B"),  # A → B
-            ("A", "C"),  # A → C
-            ("B", "D"),  # B → D
-            ("C", "D"),  # C → D
-        ]
-    )
-    for node in nx.topological_sort(g):
-        yield (node, set(g.predecessors(node)))
+def sequential_task():
+    for i in range(10):
+        yield Task(id=f"task_{i}", data={"value": i})
 
 
-def test_graphband_sequential(tmp_path):
-    """Tasks should follow dependency order in a static DAG."""
-    db_path = tmp_path / "graph.sqlite"
-    pbar = Graphband(graph_fn=simple_graph(), com=db_path, cleanup=False)
+def sequential_multi_worker_task():
+    for i in range(10):
+        yield Task(id=f"task_{i}", data={"value": i}, max_parallel_workers=2)
 
-    results = []
-    for node in pbar:
-        results.append(node)
 
-    # The order may differ, but constraints must be respected
-    assert results.index("A") < results.index("B")
-    assert results.index("A") < results.index("C")
-    assert results.index("B") < results.index("D")
-    assert results.index("C") < results.index("D")
+def sequential_task_with_labels():
+    for i in range(5):
+        yield Task(id=f"task_{i}", data={"value": i}, requirements={"cpu"})
+    for i in range(5, 10):
+        yield Task(id=f"task_{i}", data={"value": i}, requirements={"gpu"})
 
-    # Check that all tasks were completed by using the same DB instance
-    completed_tasks = pbar.completed
-    expected_tasks = {pbar.hash_fn(node) for node in ["A", "B", "C", "D"]}
-    assert set(completed_tasks) == expected_tasks
 
-
-def test_graphband_custom_hash_fn(tmp_path):
-    """Support for user-provided hash function."""
-
-    def graph_fn():
-        g = nx.DiGraph()
-        g.add_edges_from([(1, 2), (2, 3)])
-        for node in nx.topological_sort(g):
-            yield (node, set(g.predecessors(node)))
-
-    db_path = tmp_path / "graph.sqlite"
-
-    def hash_fn(x):
-        return f"task-{x}"
-
-    pbar = Graphband(graph_fn=graph_fn(), com=db_path, hash_fn=hash_fn, cleanup=False)
-    results = list(pbar)
-
-    # Check using the Graphband instance
-    completed_tasks = pbar.completed
-    assert set(completed_tasks) == {"task-1", "task-2", "task-3"}
-    assert results == [1, 2, 3]
-
-
-def test_graphband_double_worker(tmp_path):
-    def graph_fn():
-        g = nx.DiGraph()
-        g.add_edges_from([(1, 2), (2, 4), (1, 3), (2, 5)])
-        for node in nx.topological_sort(g):
-            yield (node, set(g.predecessors(node)))
-
-    db_path = tmp_path / "graph.sqlite"
-    pbar1 = Graphband(graph_fn=graph_fn(), com=db_path)
-    pbar2 = Graphband(graph_fn=graph_fn(), com=db_path)
-
-    pbar1_iter = iter(pbar1)
-    pbar2_iter = iter(pbar2)
-
-    x1 = next(pbar1_iter)
-    x2 = next(pbar1_iter)
-    x3 = next(pbar2_iter)
-
-    assert x1 == 1
-    assert x2 in {2, 3}
-    assert x3 in {2, 3}
-
-
-def test_graphband_generator_input(tmp_path):
-    """Test Graphband with generator-based lazy task discovery."""
-
-    def task_generator():
-        for i in range(5):
-            yield f"task-{i}"
-
-    def graph_from_generator():
-        g = nx.DiGraph()
-        # Add nodes from generator
-        for task in task_generator():
-            g.add_node(task)
-        for node in nx.topological_sort(g):
-            yield (node, set(g.predecessors(node)))
-
-    db_path = tmp_path / "generator_input.sqlite"
-    pbar = Graphband(graph_fn=graph_from_generator(), com=db_path, cleanup=True)
-    results = list(pbar)
-
-    expected = [f"task-{i}" for i in range(5)]
-    assert set(results) == set(expected)
-
-
-def test_graphband_task_identity_determinism(tmp_path):
-    """Test that task identity is deterministic across workers."""
-
-    def graph_fn():
-        g = nx.DiGraph()
-        g.add_nodes_from([1, 2, 3])
-        for node in nx.topological_sort(g):
-            yield (node, set(g.predecessors(node)))
-
-    # Custom hash function to ensure determinism
-    def deterministic_hash(item):
-        return f"id-{item}"
-
-    db_path = tmp_path / "graph.sqlite"
-
-    # Create two workers with same graph and hash function
-    worker1 = Graphband(graph_fn=graph_fn(), hash_fn=deterministic_hash, com=db_path)
-    worker2 = Graphband(graph_fn=graph_fn(), hash_fn=deterministic_hash, com=db_path)
-
-    # Both should see the same task IDs
-    w1_results = list(worker1)
-    w2_results = list(worker2)
-
-    # All tasks should be processed by one worker or the other, no duplicates
-    all_results = w1_results + w2_results
-    assert set(all_results) == {1, 2, 3}
-
-    # Verify that tasks were split between workers (no duplicates)
-    # Since they share a database, total unique completions should be 3
-    all_completed = set(worker1.completed + worker2.completed)
-    assert len(all_completed) == 3
-
-
-def test_graphband_termination_conditions(tmp_path):
-    """Test termination when no tasks ready/in_progress and generator exhausted."""
-    call_count = 0
-
-    def limited_graph_fn():
-        nonlocal call_count
-        call_count += 1
-        g = nx.DiGraph()
-
-        # Always provide the same tasks - termination will happen when they're all
-        # complete
-        g.add_nodes_from([f"task-{i}" for i in range(1, 4)])  # task-1, task-2, task-3
-
-        for node in nx.topological_sort(g):
-            yield (node, set(g.predecessors(node)))
-
-    db_path = tmp_path / "graph.sqlite"
-    pbar = Graphband(graph_fn=limited_graph_fn(), com=db_path, cleanup=False)
-
-    results = list(pbar)
-
-    # Should process all 3 tasks, then terminate
-    assert len(results) == 3
-    assert set(results) == {"task-1", "task-2", "task-3"}
-
-    # Should terminate cleanly when all tasks completed
-    completed_tasks = pbar.completed
-    assert len(completed_tasks) == 3
-
-
-def test_graphband_large_dag_performance(tmp_path):
-    """Test performance with larger DAG."""
-
-    def large_graph():
-        g = nx.DiGraph()
-        # Create a chain of dependencies: 0 -> 1 -> 2 -> ... -> 99
-        for i in range(100):
-            g.add_node(i)
-            if i > 0:
-                g.add_edge(i - 1, i)
-        for node in nx.topological_sort(g):
-            yield (node, set(g.predecessors(node)))
-
-    db_path = tmp_path / "large_dag.sqlite"
-    pbar = Graphband(graph_fn=large_graph(), com=db_path, cleanup=True)
-    results = list(pbar)
-
-    # Should process all tasks in dependency order
-    assert len(results) == 100
-    assert results == list(range(100))  # Should be in order due to dependencies
-
-
-def test_graphband_non_hashable_items(tmp_path):
-    """Test Graphband with non-hashable items using UUID mapping as per requirements."""
-
-    # Create non-hashable items (dictionaries)
-    task_data = [
-        {"name": "task_a", "deps": []},
-        {"name": "task_b", "deps": ["task_a"]},
-        {"name": "task_c", "deps": ["task_a"]},
-        {"name": "task_d", "deps": ["task_b", "task_c"]},
-    ]
-
-    # Create UUID mapping as required by graphband.md
-    uuid_mapping = {}
-    name_to_uuid = {}
-    for task in task_data:
-        task_uuid = str(uuid.uuid4())
-        uuid_mapping[task_uuid] = task
-        name_to_uuid[task["name"]] = task_uuid
-
-    def graph_with_uuid_mapping():
-        g = nx.DiGraph()
-
-        # Add UUID nodes (hashable)
-        for task_uuid in uuid_mapping.keys():
-            g.add_node(task_uuid)
-            # Store the actual task data in node attributes
-            g.nodes[task_uuid]["value"] = uuid_mapping[task_uuid]
-
-        # Add edges based on dependencies using UUIDs
-        for task_uuid, task_data_item in uuid_mapping.items():
-            for dep_name in task_data_item["deps"]:
-                dep_uuid = name_to_uuid[dep_name]
-                g.add_edge(dep_uuid, task_uuid)
-
-        for node in nx.topological_sort(g):
-            yield (node, set(g.predecessors(node)))
-
-    # Custom hash function using task name from UUID mapping
-    def task_hash(task_uuid):
-        task_data_item = uuid_mapping[task_uuid]
-        return f"task_{task_data_item['name']}"
-
-    db_path = tmp_path / "graph.sqlite"
-    pbar = Graphband(
-        graph_fn=graph_with_uuid_mapping(),
-        hash_fn=task_hash,
-        com=db_path,
-        cleanup=False,
-    )
-
-    results = list(pbar)
-
-    # Should process all UUIDs
-    assert len(results) == 4
-    assert all(isinstance(result_uuid, str) for result_uuid in results)
-
-    # Get the actual task data from UUIDs
-    result_tasks = [uuid_mapping[result_uuid] for result_uuid in results]
-    result_names = [task["name"] for task in result_tasks]
-
-    # Should respect dependencies
-    assert result_names.index("task_a") < result_names.index("task_b")
-    assert result_names.index("task_a") < result_names.index("task_c")
-    assert result_names.index("task_b") < result_names.index("task_d")
-    assert result_names.index("task_c") < result_names.index("task_d")
-
-    # Verify custom hash function was used
-    completed_task_ids = pbar.completed
-    expected_task_ids = {"task_task_a", "task_task_b", "task_task_c", "task_task_d"}
-    assert set(completed_task_ids) == expected_task_ids
-
-
-def worker_process(worker_id: int, db_path: Path, results_queue: mp.Queue):
-    """Worker function that processes a Graphband graph."""
+def graph_task():
     digraph = nx.DiGraph()
-    for chain in range(4):  # 4 independent chains
-        for level in range(6):  # 6 levels deep
-            node_name = f"chain_{chain}_level_{level}"
-            digraph.add_node(node_name)
-            if level > 0:
-                digraph.add_edge(f"chain_{chain}_level_{level - 1}", node_name)
-
-    processed_nodes = []
-
-    def graph_generator():
-        for node in nx.topological_sort(digraph):
-            yield (node, set(digraph.predecessors(node)))
-
-    try:
-        pbar = Graphband(
-            graph_fn=graph_generator(),
-            com=db_path,
-            identifier=f"worker_{worker_id}",
-            cleanup=False,
+    edges = [
+        ("a", "b"),
+        ("a", "c"),
+        ("b", "d"),
+        ("b", "e"),
+        ("c", "f"),
+        ("c", "g"),
+    ]
+    digraph.add_edges_from(edges)
+    digraph.nodes["b"]["requirements"] = {"b-branch"}
+    digraph.nodes["d"]["requirements"] = {"b-branch"}
+    digraph.nodes["e"]["requirements"] = {"b-branch"}
+    for node in nx.topological_sort(digraph):
+        yield Task(
+            id=node,
+            data=node,
+            dependencies=digraph.predecessors(node),
+            requirements=digraph.nodes[node].get("requirements", {"main"}),
         )
 
-        for node in pbar:
-            processed_nodes.append(node)
-            time.sleep(random.uniform(0, 0.2))
 
-    except Exception as e:
-        results_queue.put((worker_id, "error", str(e)))
-        return
+@pytest.mark.human_reviewed
+def test_graphband_sequential_success(tmp_path):
+    pbar = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+    )
+    items = list(pbar)
 
-    results_queue.put((worker_id, "success", processed_nodes))
+    assert len(items) == 10
+    with Session(pbar._engine) as session:
+        workers = session.query(WorkerEntry).all()
+        assert len(workers) == 1
+        assert workers[0].status == WorkerStatus.OFFLINE
+        tasks = session.query(TaskEntry).all()
+        assert len(tasks) == 10
+        for id, task in enumerate(tasks):
+            assert task.current_status.status == TaskStatusEnum.COMPLETED
+            assert task.current_status.worker == workers[0]
+            assert task.id == f"task_{id}"
+
+    # if we no iterate again, we yield nothing
+    assert list(pbar) == []
+
+    pbar = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        identifier="2nd-worker",
+    )
+    assert list(pbar) == []  # another iterator won't do anything now
 
 
-def test_parallel_graphband_processing(tmp_path):
-    """Test that multiple Graphband workers don't process duplicate nodes."""
-    db_path = tmp_path / "parallel_test.db"
-    results_queue = mp.Queue()
+@pytest.mark.human_reviewed
+def test_graphband_sequential_close_and_resume(tmp_path):
+    pbar = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+    )
 
-    # Expected total nodes: 4 chains * 6 levels = 24 nodes
-    expected_total_nodes = 4 * 6
+    items = []
+    for item in pbar:
+        items.append(item)
+        if item.id == "task_5":
+            pbar.close()  # this counts as this task succeeded
 
-    processes = []
-    for worker_id in range(2):
-        p = mp.Process(target=worker_process, args=(worker_id, db_path, results_queue))
-        processes.append(p)
-        p.start()
+    assert len(items) == 6  # 0 to 5 inclusive
 
-    for p in processes:
-        p.join()
+    with Session(pbar._engine) as session:
+        tasks = session.query(TaskEntry).all()
+        assert len(tasks) == 6
+        for id, task in enumerate(tasks):
+            assert task.current_status.status == TaskStatusEnum.COMPLETED
+            assert task.id == f"task_{id}"
 
-    # Collect results
-    results = {}
-    while not results_queue.empty():
-        worker_id, status, data = results_queue.get()
-        results[worker_id] = (status, data)
+    for item in pbar:
+        items.append(item)
 
-    assert len(results) == 2
-    for worker_id, (status, data) in results.items():
-        assert status == "success", f"Worker {worker_id} failed: {data}"
+    assert len(items) == 10  # 6 to 9 inclusive
+    assert len({x.id for x in items}) == 10
 
-    all_processed_nodes = []
-    for worker_id, (status, processed_nodes) in results.items():
-        all_processed_nodes.extend(processed_nodes)
+    with Session(pbar._engine) as session:
+        tasks = session.query(TaskEntry).all()
+        assert len(tasks) == 10
+        assert all(
+            task.current_status.status == TaskStatusEnum.COMPLETED for task in tasks
+        )
 
-    assert len(all_processed_nodes) == expected_total_nodes
-    assert len(set(all_processed_nodes)) == expected_total_nodes
 
-    # Verify each worker processed at least some nodes
-    for worker_id, (status, processed_nodes) in results.items():
-        assert len(processed_nodes) > 0
+@pytest.mark.human_reviewed
+def test_graphband_sequential_break_and_resume(tmp_path):
+    pbar = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+    )
+
+    items = []
+    for item in pbar:
+        if item.id == "task_5":
+            break  # this counts as this task failed
+        items.append(item)
+
+    assert len(items) == 5
+
+    with Session(pbar._engine) as session:
+        tasks = session.query(TaskEntry).all()
+        assert len(tasks) == 6
+        for idx, task in enumerate(tasks):
+            if idx == 5:
+                assert task.current_status.status == TaskStatusEnum.FAILED
+            else:
+                assert task.current_status.status == TaskStatusEnum.COMPLETED
+
+    for item in pbar:
+        items.append(item)
+
+    assert len(items) == 9
+
+    with Session(pbar._engine) as session:
+        tasks = session.query(TaskEntry).all()
+        assert len(tasks) == 10
+        for idx, task in enumerate(tasks):
+            if idx == 5:
+                assert task.current_status.status == TaskStatusEnum.FAILED
+            else:
+                assert task.current_status.status == TaskStatusEnum.COMPLETED
+
+
+@pytest.mark.human_reviewed
+def test_graphband_sequential_break_and_retry(tmp_path):
+    pbar = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        max_failed_retries=2,
+    )
+
+    items = []
+    for item in pbar:
+        if item.id == "task_5":
+            break
+        items.append(item)
+
+    assert len(items) == 5
+    assert "task_5" in pbar._failed_job_cache
+    items.extend(list(pbar))
+    assert len(pbar._failed_job_cache) == 0
+    # failed job has been cleaned up after iteration
+    assert len([x.id for x in items]) == 10
+    # the failed task has been retried and added.
+
+    with Session(pbar._engine) as session:
+        task_5 = session.query(TaskEntry).filter(TaskEntry.id == "task_5").first()
+        assert task_5 is not None
+        assert task_5.statuses[0].status == TaskStatusEnum.RUNNING
+        assert task_5.statuses[1].status == TaskStatusEnum.FAILED
+        assert task_5.statuses[2].status == TaskStatusEnum.RUNNING
+        assert task_5.statuses[3].status == TaskStatusEnum.COMPLETED
+
+
+def test_duplicate_worker(tmp_path):
+    _ = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+    )
+    with pytest.raises(ValueError, match="Worker with this identifier already exists"):
+        _ = Graphband(
+            sequential_task(),
+            db=f"sqlite:///{tmp_path}/graphband.sqlite",
+            lock=Lock(f"{tmp_path}/graphband.lock"),
+        )
+
+
+def task_worker(
+    iterator: t.Type[GraphTraversalProtocol],
+    lock_path: str,
+    db: str,
+    file: str,
+    timeout: float,
+    **kwargs: dict,
+):
+    lock = Lock(lock_path)
+    pbar = Graphband(iterator(), lock=lock, db=db, **kwargs)
+    for task in pbar:
+        with pbar.lock:
+            with open(file, "a") as f:
+                f.write(f"{task.id} - {pbar.identifier} \n")
+        time.sleep(timeout)
+
+
+@pytest.mark.human_reviewed
+@pytest.mark.parametrize("num_processes", [1, 2, 4])
+def test_multiprocessing_sequential_task(tmp_path, num_processes):
+    """Test laufband using a multiprocessing pool."""
+    lock_path = f"{tmp_path}/graphband.lock"
+    db = f"sqlite:///{tmp_path}/graphband.sqlite"
+    file = f"{tmp_path}/output.txt"
+
+    with multiprocessing.Pool(processes=num_processes) as pool:
+        # increase the timeout for more processes
+        pool.starmap(
+            task_worker,
+            [(sequential_task, lock_path, db, file, num_processes * 0.2)]
+            * num_processes,
+        )
+
+    worker = []
+    tasks = []
+    with open(file, "r") as f:
+        for line in f:
+            task_id, worker_id = line.strip().split(" - ")
+            worker.append(worker_id)
+            tasks.append(task_id)
+
+    assert len(set(worker)) == num_processes
+    assert len(set(tasks)) == 10
+
+
+def test_sequential_multi_worker_task(tmp_path):
+    lock_path = f"{tmp_path}/graphband.lock"
+    db = f"sqlite:///{tmp_path}/graphband.sqlite"
+    file = f"{tmp_path}/output.txt"
+    num_processes = 4
+
+    with multiprocessing.Pool(processes=num_processes) as pool:
+        # increase the timeout for more processes
+        pool.starmap(
+            task_worker,
+            [(sequential_multi_worker_task, lock_path, db, file, num_processes * 0.2)]
+            * num_processes,
+        )
+
+    worker = []
+    tasks = []
+    with open(file, "r") as f:
+        for line in f:
+            task_id, worker_id = line.strip().split(" - ")
+            worker.append(worker_id)
+            tasks.append(task_id)
+    assert len(set(worker)) == num_processes
+    assert len(set(tasks)) == 10
+    assert 18 <= len(tasks) <= 20, f"Expected ~20 task executions, got {len(tasks)}"
+    # with the given timeout we expect each job to be processed by 2 workers.
+
+
+def test_kill_sequential_task_worker(tmp_path):
+    lock_path = f"{tmp_path}/graphband.lock"
+    db = f"sqlite:///{tmp_path}/graphband.sqlite"
+    file = f"{tmp_path}/output.txt"
+
+    proc = multiprocessing.Process(
+        target=task_worker,
+        args=(sequential_task, lock_path, db, file, 2),
+        kwargs={
+            "heartbeat_timeout": "2",
+            "heartbeat_interval": "1",
+        },
+    )
+    proc.start()
+    time.sleep(1)  # let the worker start and process about 4 tasks
+    # kill the worker immediately with no time to properly exit
+    proc.kill()
+    proc.join()
+    # assert the worker is still registered as "online"
+    engine = create_engine(db)
+    with Session(engine) as session:
+        tasks = session.query(TaskEntry).all()
+        assert len(tasks) == 1
+        assert tasks[0].current_status.status == TaskStatusEnum.RUNNING
+        assert tasks[0].current_status.worker.status == WorkerStatus.BUSY
+        assert tasks[0].current_status.worker.heartbeat_expired is False
+        time.sleep(2)  # wait for the heartbeat to expire
+        assert tasks[0].current_status.worker.heartbeat_expired is True
+
+    task_worker(
+        sequential_task,
+        lock_path,
+        db,
+        file,
+        0.1,
+        heartbeat_timeout=2,
+        heartbeat_interval=1,
+    )
+
+    with Session(engine) as session:
+        w1 = session.get(WorkerEntry, proc.pid)
+        assert w1 is not None
+        assert w1.status == WorkerStatus.KILLED
+        assert len(w1.running_tasks) == 0
+        w2 = session.get(WorkerEntry, os.getpid())
+        assert w2 is not None
+        assert w2.status == WorkerStatus.OFFLINE
+        assert len(w2.running_tasks) == 0
+
+        tasks = session.query(TaskEntry).all()
+        assert len(tasks) == 10
+        assert tasks[0].current_status.status == TaskStatusEnum.KILLED
+        for task in tasks[1:]:
+            assert task.current_status.status == TaskStatusEnum.COMPLETED
+
+    task_worker(
+        sequential_task,
+        lock_path,
+        db,
+        file,
+        0.1,
+        heartbeat_timeout=2,
+        heartbeat_interval=1,
+        max_killed_retries=2,
+        identifier="killed-retry-worker",
+    )
+
+    with Session(engine) as session:
+        w3 = session.get(WorkerEntry, "killed-retry-worker")
+        assert w3 is not None
+        assert w3.status == WorkerStatus.OFFLINE
+        tasks = session.query(TaskEntry).all()
+        assert tasks[0].current_status.status == TaskStatusEnum.COMPLETED
+        assert tasks[0].current_status.worker == w3
+
+
+def test_sequential_task_with_labels(tmp_path):
+    cpu_worker = Graphband(
+        sequential_task_with_labels(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        labels={"cpu"},
+        identifier="cpu_worker",
+    )
+    gpu_worker = Graphband(
+        sequential_task_with_labels(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        labels={"gpu"},
+        identifier="gpu_worker",
+    )
+    assert len(list(cpu_worker)) == 5
+    assert len(list(gpu_worker)) == 5
+
+    with Session(cpu_worker._engine) as session:
+        cpu_tasks = (
+            session.query(TaskEntry)
+            .filter(TaskEntry.requirements.contains("cpu"))
+            .all()
+        )
+        gpu_tasks = (
+            session.query(TaskEntry)
+            .filter(TaskEntry.requirements.contains("gpu"))
+            .all()
+        )
+        assert len(cpu_tasks) == 5
+        assert len(gpu_tasks) == 5
+
+
+def test_sequential_task_with_labels_multi_label_worker(tmp_path):
+    worker = Graphband(
+        sequential_task_with_labels(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        labels={"cpu", "gpu"},
+    )
+    assert len(list(worker)) == 10
+
+
+def test_failure_policy_stop(tmp_path):
+    """Test if failure policy stop works."""
+    worker = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        failure_policy="stop",
+    )
+    for item in worker:
+        if item.id == "task_5":
+            break  # counts as a failed job
+
+    # reiterating will raise an error, as there is one job
+    # in the database that has failed
+    with pytest.raises(RuntimeError):
+        for idx in worker:
+            pass
+
+
+def test_graph_task(tmp_path):
+    w1 = Graphband(
+        graph_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        labels={"b-branch"},
+        identifier="b-branch-worker",
+    )
+    items = [x.id for x in w1]
+    assert items == []
+
+    w2 = Graphband(
+        graph_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        identifier="main-worker",
+        labels={"main"},
+    )
+    items = [x.id for x in w2]
+    assert items == [
+        "a",
+        "c",
+        "f",
+        "g",
+    ]  # the "b", "d", "e" are in the b-branch which should not be run
+    items = [x.id for x in w1]
+    assert items == ["b", "d", "e"]

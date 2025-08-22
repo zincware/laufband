@@ -1,8 +1,9 @@
-import argparse
-import datetime
+import time
 from pathlib import Path
 from typing import Dict, List
 
+import typer
+from flufl.lock import Lock
 from rich.console import Console
 from rich.layout import Layout
 from rich.live import Live
@@ -18,53 +19,101 @@ from rich.progress import (
 from rich.table import Table
 from rich.text import Text
 
-from laufband.db import GraphbandDB
+from laufband.db import TaskStatusEnum, WorkerStatus
+from laufband.monitor import Monitor
 
-ACTIVITY_TIMEOUT_SECONDS = 300  # 5 minutes
+app = typer.Typer(help="Laufband CLI Tool")
 
 
 class LaufbandStatusDisplay:
-    def __init__(self, db_path: str | Path):
+    def __init__(self, db_path: str | Path, lock_path: str | Path):
         self.db_path = Path(db_path)
+        self.lock_path = Path(lock_path)
         self.console = Console()
-        self.db = None
+        self.monitor = None
 
-    def _ensure_db_connection(self):
-        """Ensure database connection exists, create if needed"""
-        if self.db is None and self.db_path.exists():
-            self.db = GraphbandDB(self.db_path, worker="cli_viewer")
+    def _ensure_monitor_connection(self):
+        """Ensure monitor connection exists, create if needed"""
+        if self.monitor is None and self.db_path.exists():
+            try:
+                self.monitor = Monitor(
+                    lock=Lock(str(self.lock_path)), db=f"sqlite:///{self.db_path}"
+                )
+            except Exception:
+                self.monitor = None
 
-    def get_job_stats(self) -> Dict[str, int] | None:
-        """Get counts of jobs in each state"""
-        self._ensure_db_connection()
-        if self.db is None:
+    def get_task_stats(self) -> Dict[str, int] | None:
+        """Get counts of tasks in each state"""
+        self._ensure_monitor_connection()
+        if self.monitor is None:
             return None
 
         try:
-            return self.db.get_job_stats()
+            stats = {}
+            for status in TaskStatusEnum:
+                tasks = self.monitor.get_tasks(status)
+                stats[status.value] = len(tasks)
+            return stats
         except Exception:
-            # Database was removed or corrupted, reset connection
-            self.db = None
+            self.monitor = None
             return None
 
     def get_worker_info(self) -> List[Dict] | None:
         """Get information about all workers"""
-        self._ensure_db_connection()
-        if self.db is None:
+        self._ensure_monitor_connection()
+        if self.monitor is None:
             return None
 
         try:
-            return self.db.get_worker_info()
+            workers = self.monitor.get_workers()
+            worker_info = []
+
+            for worker in workers:
+                # Count processed tasks for this worker
+                processed_tasks = len(
+                    self.monitor.get_tasks(
+                        state=TaskStatusEnum.COMPLETED, worker=worker
+                    )
+                )
+
+                worker_info.append(
+                    {
+                        "worker_id": worker.id,
+                        "status": worker.status.value,
+                        "last_heartbeat": worker.last_heartbeat.strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        ),
+                        "processed_tasks": processed_tasks,
+                        "hostname": worker.hostname or "Unknown",
+                        "pid": worker.pid or 0,
+                        "labels": ", ".join(worker.labels) if worker.labels else "None",
+                        "heartbeat_expired": worker.heartbeat_expired,
+                    }
+                )
+
+            return worker_info
         except Exception:
-            # Database was removed or corrupted, reset connection
-            self.db = None
+            self.monitor = None
+            return None
+
+    def get_total_tasks(self) -> int | None:
+        """Get total tasks from workflow"""
+        self._ensure_monitor_connection()
+        if self.monitor is None:
+            return None
+
+        try:
+            workflow = self.monitor.get_workflow()
+            return workflow.total_tasks
+        except Exception:
             return None
 
     def create_progress_bar(self, stats: Dict[str, int]) -> Panel:
         """Create overall progress bar"""
-        total_from_metadata = self.db.get_metadata("total_tasks")
-        if total_from_metadata is not None:
-            total = int(total_from_metadata)
+        total_from_workflow = self.get_total_tasks()
+
+        if total_from_workflow is not None:
+            total = total_from_workflow
             progress = Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -97,8 +146,8 @@ class LaufbandStatusDisplay:
         return Panel(progress, title="Overall Progress")
 
     def create_stats_table(self, stats: Dict[str, int]) -> Table:
-        """Create job statistics table"""
-        table = Table(title="Job Statistics")
+        """Create task statistics table"""
+        table = Table(title="Task Statistics")
         table.add_column("State", style="cyan")
         table.add_column("Count", justify="right", style="magenta")
         table.add_column("Percentage", justify="right", style="green")
@@ -112,9 +161,11 @@ class LaufbandStatusDisplay:
             state_color = {
                 "completed": "green",
                 "running": "yellow",
-                "pending": "blue",
                 "failed": "red",
-                "died": "red bold",
+                "abandoned": "red bold",
+                "cancelled": "orange1",
+                "blocked": "blue",
+                "killed": "red bold",
             }.get(state, "white")
 
             table.add_row(
@@ -127,44 +178,38 @@ class LaufbandStatusDisplay:
         """Create workers information table"""
         table = Table(title="Workers")
         table.add_column("Worker ID", style="cyan")
-        table.add_column("Last Seen", style="yellow")
-        table.add_column("Active Jobs", justify="right", style="magenta")
-        table.add_column("Processed", justify="right", style="green")
-        table.add_column("Max Retries", justify="right", style="blue")
-        table.add_column("Status", style="green")
+        table.add_column("Status", style="yellow")
+        table.add_column("Last Heartbeat", style="white")
+        table.add_column("Processed Tasks", justify="right", style="magenta")
+        table.add_column("Hostname", style="green")
+        table.add_column("PID", justify="right", style="blue")
+        table.add_column("Labels", style="dim")
 
         for worker in workers:
-            # Determine if worker is active (seen in last 5 minutes)
-            try:
-                # SQLite CURRENT_TIMESTAMP format: '2024-01-01 12:00:00'
-                last_seen_str = worker["last_seen"]
-                if last_seen_str:
-                    # Parse SQLite timestamp format
-                    last_seen = datetime.datetime.strptime(
-                        last_seen_str, "%Y-%m-%d %H:%M:%S"
-                    )
-                    # Assume UTC since SQLite CURRENT_TIMESTAMP is UTC
-                    last_seen = last_seen.replace(tzinfo=datetime.timezone.utc)
-                    now = datetime.datetime.now(datetime.timezone.utc)
-                    time_diff = (now - last_seen).total_seconds()
-                    status = (
-                        "Active" if time_diff < ACTIVITY_TIMEOUT_SECONDS else "Inactive"
-                    )
-                    status_color = "green" if status == "Active" else "red"
-                else:
-                    status = "Unknown"
-                    status_color = "yellow"
-            except Exception:
-                status = "Unknown"
-                status_color = "yellow"
+            # Use database heartbeat_expired property
+            status = worker["status"]
+            if worker["heartbeat_expired"] and status in [
+                WorkerStatus.IDLE.value,
+                WorkerStatus.BUSY.value,
+            ]:
+                status = f"{status} (stale)"
+                status_color = "red"
+            else:
+                status_color = {
+                    WorkerStatus.IDLE.value: "green",
+                    WorkerStatus.BUSY.value: "yellow",
+                    WorkerStatus.OFFLINE.value: "red",
+                    WorkerStatus.KILLED.value: "red bold",
+                }.get(worker["status"], "white")
 
             table.add_row(
-                worker["worker"],
-                worker["last_seen"],
-                str(worker["active_jobs"]),
-                str(worker["processed_jobs"]),
-                str(worker["max_retries"]),
+                worker["worker_id"],
                 Text(status, style=status_color),
+                worker["last_heartbeat"],
+                str(worker["processed_tasks"]),
+                worker["hostname"],
+                str(worker["pid"]),
+                worker["labels"],
             )
 
         return table
@@ -180,18 +225,16 @@ class LaufbandStatusDisplay:
 
     def display_status(self):
         """Display the current status"""
-        stats = self.get_job_stats()
+        stats = self.get_task_stats()
         workers = self.get_worker_info()
 
         if stats is None or workers is None:
-            # Database doesn't exist yet
             self.console.print(self.create_waiting_panel())
             return
 
         # Create layout
         layout = Layout()
         layout.split_column(Layout(name="progress", size=5), Layout(name="tables"))
-
         layout["tables"].split_row(Layout(name="stats"), Layout(name="workers"))
 
         # Add content
@@ -202,88 +245,67 @@ class LaufbandStatusDisplay:
         self.console.print(layout)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Laufband CLI Tool")
-    parser.add_argument("--version", action="version", version="Laufband CLI 1.0")
-    parser.add_argument(
-        "--db",
-        type=str,
-        default="laufband.sqlite",
-        help="Path to the laufband database file (default: laufband.sqlite)",
-    )
+@app.command()
+def status(
+    db: str = typer.Option(
+        "laufband.sqlite", "--db", help="Path to the laufband database file"
+    ),
+    lock: str = typer.Option(
+        "laufband.lock", "--lock", help="Path to the laufband lock file"
+    ),
+):
+    """Show current laufband status"""
+    display = LaufbandStatusDisplay(db, lock)
+    display.display_status()
 
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # Status command
-    status_parser = subparsers.add_parser("status", help="Show current laufband status")
-    status_parser.add_argument(
-        "--db", type=str, help="Path to the laufband database file"
-    )
+@app.command()
+def watch(
+    db: str = typer.Option(
+        "laufband.sqlite", "--db", help="Path to the laufband database file"
+    ),
+    lock: str = typer.Option(
+        "laufband.lock", "--lock", help="Path to the laufband lock file"
+    ),
+    interval: float = typer.Option(
+        2.0, "--interval", help="Update interval in seconds"
+    ),
+):
+    """Watch laufband status in real-time"""
+    display = LaufbandStatusDisplay(db, lock)
+    console = Console()
 
-    # Watch command
-    watch_parser = subparsers.add_parser(
-        "watch", help="Watch laufband status in real-time"
-    )
-    watch_parser.add_argument(
-        "--db", type=str, help="Path to the laufband database file"
-    )
-    watch_parser.add_argument(
-        "--interval",
-        type=float,
-        default=2.0,
-        help="Update interval in seconds (default: 2.0)",
-    )
+    try:
+        with Live(console=console, refresh_per_second=1 / interval) as live:
+            while True:
+                stats = display.get_task_stats()
+                workers = display.get_worker_info()
 
-    args = parser.parse_args()
+                if stats is None or workers is None:
+                    live.update(display.create_waiting_panel())
+                else:
+                    # Create layout
+                    layout = Layout()
+                    layout.split_column(
+                        Layout(name="progress", size=5), Layout(name="tables")
+                    )
+                    layout["tables"].split_row(
+                        Layout(name="stats"), Layout(name="workers")
+                    )
 
-    # Default to status if no command given
-    if args.command is None:
-        args.command = "status"
+                    # Add content
+                    layout["progress"].update(display.create_progress_bar(stats))
+                    layout["stats"].update(Panel(display.create_stats_table(stats)))
+                    layout["workers"].update(
+                        Panel(display.create_workers_table(workers))
+                    )
 
-    # Determine database path
-    db_path = getattr(args, "db", None) or "laufband.sqlite"
+                    live.update(layout)
 
-    display = LaufbandStatusDisplay(db_path)
-
-    if args.command == "status":
-        display.display_status()
-    elif args.command == "watch":
-        import time
-
-        console = Console()
-        try:
-            with Live(console=console, refresh_per_second=1 / args.interval) as live:
-                while True:
-                    stats = display.get_job_stats()
-                    workers = display.get_worker_info()
-
-                    if stats is None or workers is None:
-                        # Database doesn't exist yet
-                        live.update(display.create_waiting_panel())
-                    else:
-                        # Create layout
-                        layout = Layout()
-                        layout.split_column(
-                            Layout(name="progress", size=5), Layout(name="tables")
-                        )
-
-                        layout["tables"].split_row(
-                            Layout(name="stats"), Layout(name="workers")
-                        )
-
-                        # Add content
-                        layout["progress"].update(display.create_progress_bar(stats))
-                        layout["stats"].update(Panel(display.create_stats_table(stats)))
-                        layout["workers"].update(
-                            Panel(display.create_workers_table(workers))
-                        )
-
-                        live.update(layout)
-
-                    time.sleep(args.interval)
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Stopped watching.[/yellow]")
+                time.sleep(interval)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopped watching.[/yellow]")
 
 
 if __name__ == "__main__":
-    main()
+    app()
