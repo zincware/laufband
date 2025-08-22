@@ -131,7 +131,8 @@ class Graphband(t.Generic[_T]):
         failure_policy: t.Literal["continue", "stop"] = os.getenv(
             "LAUFBAND_FAILURE_POLICY", "continue"
         ),
-        heartbeat_timeout: int = int(os.getenv("LAUFBAND_HEARTBEAT_TIMEOUT", 60 * 60)),
+        heartbeat_timeout: int = int(os.getenv("LAUFBAND_HEARTBEAT_TIMEOUT", 60)),
+        heartbeat_interval: int = int(os.getenv("LAUFBAND_HEARTBEAT_INTERVAL", 30)),
         max_died_retries: int = int(os.getenv("LAUFBAND_MAX_DIED_RETRIES", 0)),
         max_failed_retries: int = int(os.getenv("LAUFBAND_MAX_FAILED_RETRIES", 0)),
         disabled: bool = bool(int(os.getenv("LAUFBAND_DISABLED", "0"))),
@@ -186,6 +187,8 @@ class Graphband(t.Generic[_T]):
         self._db = db
         self._failed_job_cache = {}  # here we keep track of failed job data to be retried later.
         self.iterator = None
+        self._heartbeat_timeout = heartbeat_timeout
+        self._heartbeat_interval = heartbeat_interval
 
         if not self.disabled:
             # we need to lock between threads and workers,
@@ -218,6 +221,8 @@ class Graphband(t.Generic[_T]):
                     status=WorkerStatus.IDLE,
                     hostname=socket.gethostname(),
                     pid=os.getpid(),
+                    heartbeat_interval=self._heartbeat_interval,
+                    heartbeat_timeout=self._heartbeat_timeout,
                 )
                 session.add(worker_entry)
                 session.commit()
@@ -326,6 +331,7 @@ class Graphband(t.Generic[_T]):
                     task_entry.statuses.append(
                         TaskStatusEntry(status=TaskStatusEnum.RUNNING, worker=worker)
                     )
+                    worker.status = WorkerStatus.BUSY
                     session.add(task_entry)
                     session.commit()
             try:
@@ -341,6 +347,10 @@ class Graphband(t.Generic[_T]):
                         task_entry.statuses.append(
                             TaskStatusEntry(status=TaskStatusEnum.FAILED, worker=worker)
                         )
+                        worker = session.get(WorkerEntry, self._identifier)
+                        if worker is None:
+                            raise ValueError(f"Worker with id {self._identifier} not found.")
+                        worker.status = WorkerStatus.IDLE
                         session.commit()
                     break
             with self.lock:
@@ -351,6 +361,10 @@ class Graphband(t.Generic[_T]):
                     task_entry.statuses.append(
                         TaskStatusEntry(status=TaskStatusEnum.COMPLETED, worker=worker)
                     )
+                    worker = session.get(WorkerEntry, self._identifier)
+                    if worker is None:
+                        raise ValueError(f"Worker with id {self._identifier} not found.")
+                    worker.status = WorkerStatus.IDLE
                     session.commit()
             if self._close_trigger:
                 break

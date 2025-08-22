@@ -25,6 +25,7 @@ class WorkerStatus(StrEnum):
     IDLE = "idle"
     BUSY = "busy"
     OFFLINE = "offline"
+    KILLED = "killed"
 
 
 class TaskStatusEnum(StrEnum):
@@ -46,6 +47,7 @@ class WorkerEntry(Base):
 
     last_heartbeat: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     heartbeat_interval: Mapped[int] = mapped_column(Integer, default=30)
+    heartbeat_timeout: Mapped[int] = mapped_column(Integer, default=60)
 
     labels: Mapped[List[str]] = mapped_column(JSON, default=list)
 
@@ -57,6 +59,23 @@ class WorkerEntry(Base):
     task_statuses: Mapped[List["TaskStatusEntry"]] = relationship(
         back_populates="worker",
     )
+
+    @property
+    def heartbeat_expired(self) -> bool:
+        """Check if the worker's heartbeat is expired."""
+        return (datetime.now() - self.last_heartbeat).total_seconds() > self.heartbeat_timeout
+    
+    @property
+    def running_tasks(self) -> set["TaskEntry"]:
+        """Get all running tasks for this worker."""
+        running_tasks = set()
+        for status in self.task_statuses:
+            if status.status == TaskStatusEnum.RUNNING:
+                running_tasks.add(status.task)
+            else:
+                # remove if running has been outdated.
+                running_tasks.discard(status.task)
+        return running_tasks
 
 
 # --- TaskStatusEntry ---
