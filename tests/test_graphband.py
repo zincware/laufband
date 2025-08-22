@@ -48,7 +48,7 @@ def graph_task():
         yield Task(
             id=node,
             data=node,
-            dependencies=digraph.predecessors(node),
+            dependencies=set(digraph.predecessors(node)),
             requirements=digraph.nodes[node].get("requirements", {"main"}),
         )
 
@@ -446,3 +446,26 @@ def test_graph_task(tmp_path):
     ]  # the "b", "d", "e" are in the b-branch which should not be run
     items = [x.id for x in w1]
     assert items == ["b", "d", "e"]
+
+    # assert dependencies are stored correctly
+    expected_dependencies = {
+        "a": [],
+        "b": ["a"],
+        "c": ["a"],
+        "d": ["b"],
+        "e": ["b"],
+        "f": ["c"],
+        "g": ["c"],
+    }
+    with Session(w1._engine) as session:
+        entries = {}
+        for task_id in expected_dependencies:
+            entry = session.query(TaskEntry).filter(TaskEntry.id == task_id).first()
+            assert entry is not None
+            assert entry.current_status.status == TaskStatusEnum.COMPLETED
+            entries[task_id] = entry
+
+        for task_id, deps in expected_dependencies.items():
+            assert entries[task_id].current_status.dependencies == [
+                entries[d] for d in deps
+            ]

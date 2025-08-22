@@ -4,11 +4,13 @@ from typing import List
 
 from sqlalchemy import (
     JSON,
+    Column,
     DateTime,
     Enum,
     ForeignKey,
     Integer,
     String,
+    Table,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -36,6 +38,15 @@ class TaskStatusEnum(StrEnum):
     CANCELLED = "cancelled"
     BLOCKED = "blocked"
     KILLED = "killed"
+
+
+# Association table for TaskStatusEntry dependencies on TaskEntry
+task_dependencies = Table(
+    "task_dependencies",
+    Base.metadata,
+    Column("status_id", Integer, ForeignKey("task_statuses.id"), primary_key=True),
+    Column("task_id", String, ForeignKey("tasks.id"), primary_key=True),
+)
 
 
 class WorkflowEntry(Base):
@@ -112,6 +123,13 @@ class TaskStatusEntry(Base):
 
     task: Mapped["TaskEntry"] = relationship(back_populates="statuses")
 
+    # Many-to-many relationship between TaskStatusEntry and TaskEntry for dependencies
+    dependencies: Mapped[List["TaskEntry"]] = relationship(
+        "TaskEntry",
+        secondary=task_dependencies,
+        overlaps="task",
+    )
+
 
 # --- TaskEntry ---
 class TaskEntry(Base):
@@ -128,6 +146,7 @@ class TaskEntry(Base):
         back_populates="task",
         cascade="all, delete-orphan",
         order_by="TaskStatusEntry.timestamp",
+        overlaps="dependencies",
     )
 
     max_parallel_workers: Mapped[int] = mapped_column(Integer, default=1)

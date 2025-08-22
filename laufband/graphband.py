@@ -395,8 +395,15 @@ class Graphband(t.Generic[TaskTypeVar]):
                     task_entry = session.get(TaskEntry, task.id)
                     if task_entry is None:
                         raise ValueError(f"Task with id {task.id} not found.")
+                    dependencies = [
+                        session.get(TaskEntry, dep_id) for dep_id in task.dependencies
+                    ]
                     task_entry.statuses.append(
-                        TaskStatusEntry(status=TaskStatusEnum.COMPLETED, worker=worker)
+                        TaskStatusEntry(
+                            status=TaskStatusEnum.COMPLETED,
+                            worker=worker,
+                            dependencies=dependencies,
+                        )
                     )
                     worker = session.get(WorkerEntry, self._identifier)
                     if worker is None:
