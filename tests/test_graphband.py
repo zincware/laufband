@@ -525,3 +525,44 @@ def test_multi_dependency_graph_task(tmp_path):
             assert sorted(
                 [e.id for e in entries[task_id].current_status.dependencies]
             ) == sorted(deps)
+
+def test_has_more_jobs(tmp_path):
+    worker = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+    )
+    assert worker.has_more_jobs is True
+    for item in worker:
+        if item.id == "task_5":
+            break
+     # there are still 4 remaining tasks
+    assert worker.has_more_jobs is True
+
+    assert len(list(worker)) == 4
+    assert worker.has_more_jobs is False
+
+    w2 = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        max_failed_retries=2,
+        identifier="retry-worker",
+    )
+    assert w2.has_more_jobs is True
+    assert len(list(w2)) == 1
+    assert w2.has_more_jobs is False
+
+    w3 = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        max_failed_retries=2,
+        identifier="retry-worker-2",
+    )
+    assert w3.has_more_jobs is False # all jobs are no completed succesfully
+
+# TODO write a test with a graph a --> b -->c where b needs a different label than a, c
+#  but has_more_jobs for the a/c worker should be true until c is completed
+#  but the worker won't be able to pick it up. The user should take care how often
+#  to iterate the worker until they stop it / define the timeout.
