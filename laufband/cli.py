@@ -1,4 +1,3 @@
-import datetime
 import time
 from pathlib import Path
 from typing import Dict, List
@@ -24,9 +23,6 @@ from laufband.db import TaskStatusEnum, WorkerStatus
 from laufband.monitor import Monitor
 
 app = typer.Typer(help="Laufband CLI Tool")
-ACTIVITY_TIMEOUT_SECONDS = (
-    60  # 1 minute # can be handled better via the db expired directly.
-)
 
 
 class LaufbandStatusDisplay:
@@ -91,6 +87,7 @@ class LaufbandStatusDisplay:
                         "hostname": worker.hostname or "Unknown",
                         "pid": worker.pid or 0,
                         "labels": ", ".join(worker.labels) if worker.labels else "None",
+                        "heartbeat_expired": worker.heartbeat_expired,
                     }
                 )
 
@@ -189,33 +186,21 @@ class LaufbandStatusDisplay:
         table.add_column("Labels", style="dim")
 
         for worker in workers:
-            # Determine if worker heartbeat is expired
-            try:
-                last_heartbeat_str = worker["last_heartbeat"]
-                last_heartbeat = datetime.datetime.strptime(
-                    last_heartbeat_str, "%Y-%m-%d %H:%M:%S"
-                )
-                now = datetime.datetime.now()
-                time_diff = (now - last_heartbeat).total_seconds()
-
-                status = worker["status"]
-                if time_diff > ACTIVITY_TIMEOUT_SECONDS and status in [
-                    WorkerStatus.IDLE.value,
-                    WorkerStatus.BUSY.value,
-                ]:
-                    status = f"{status} (stale)"
-                    status_color = "red"
-                else:
-                    status_color = {
-                        WorkerStatus.IDLE.value: "green",
-                        WorkerStatus.BUSY.value: "yellow",
-                        WorkerStatus.OFFLINE.value: "red",
-                        WorkerStatus.KILLED.value: "red bold",
-                    }.get(worker["status"], "white")
-
-            except Exception:
-                status = worker["status"]
-                status_color = "yellow"
+            # Use database heartbeat_expired property
+            status = worker["status"]
+            if worker["heartbeat_expired"] and status in [
+                WorkerStatus.IDLE.value,
+                WorkerStatus.BUSY.value,
+            ]:
+                status = f"{status} (stale)"
+                status_color = "red"
+            else:
+                status_color = {
+                    WorkerStatus.IDLE.value: "green",
+                    WorkerStatus.BUSY.value: "yellow",
+                    WorkerStatus.OFFLINE.value: "red",
+                    WorkerStatus.KILLED.value: "red bold",
+                }.get(worker["status"], "white")
 
             table.add_row(
                 worker["worker_id"],
