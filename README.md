@@ -145,10 +145,10 @@ You can use the `laufband watch` to follow the progress across all active worker
 # Graphband
 
 Laufband supports dependency-aware tasks through `laufband.Graphband`.
-To utilize this functionality, you need to write an iterator taking care of the correct order of tasks.
+To use this, provide an iterator that yields tasks in a valid execution order.
 
 > [!NOTE]
-> The `laufband.Laufband` uses directed graph without any edges as input to `laufband.Graphband`.
+> `laufband.Laufband` effectively uses a directed graph with no edges as the input to `laufband.Graphband`.
 
 ```py
 import networkx as nx
@@ -186,7 +186,7 @@ for task in worker:
     print(task.id, task.data)
 ```
 
-# Labels, Requirements and Multiple Workers per Task
+# Labels, Requirements, and Multiple Workers per Task
 
 You can assign requirements to your tasks and labels to workers to control their execution.
 
@@ -201,25 +201,26 @@ w1 = Graphband(iterator(), identifier="w1")
 w2 = Graphband(iterator(), identifier="w2", labels={"gpu"})
 
 print([x.id for x in w1])
-# [task1]
+# ["task1"]
 print([x.id for x in w2])
-# [task2]
+# ["task2"]
 ```
 
-Sometimes, a task itself supports internal parallel execution, e.g. through nested use of `laufband` In such a case you can assign multiple workers to one task.
+Sometimes a task supports internal parallel execution (e.g., nested use of `laufband`). In such a case, you can assign multiple workers to one task.
 
 > [!NOTE]
-> Keep in mind that `laufband` does not actually schedule the execution. The available workers per task depends on the number of workers being spawned.
+> Keep in mind that `laufband` does not actually schedule the execution. The number of available workers per task depends on how many workers are spawned.
 
 ```py
 from laufband import Task, Graphband
 
 def iterator():
     yield Task(id="task1", max_parallel_workers=2)
-    # a maximum of 2 workers will be assign to this job until both successfully finish .
+    # At most 2 workers will be assigned to this job until both successfully finish.
 
 worker = Graphband(iterator())
 
 for item in worker:
-    # code that can be executed multiple times, e.g. via laufband itself.
+    # Code that can be executed multiple times, e.g., via laufband itself.
+    ...
 ```
