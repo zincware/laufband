@@ -170,7 +170,7 @@ class Graphband(t.Generic[TaskTypeVar]):
         self._max_killed_retries = max_killed_retries
         self._db = db
         self._failed_job_cache = {}  # here we keep track of failed job data to be retried later.
-        self.iterator = None
+        self._iterator = None
         self._heartbeat_timeout = heartbeat_timeout
         self._heartbeat_interval = heartbeat_interval
         self._labels = frozenset(labels or [])
@@ -240,13 +240,19 @@ class Graphband(t.Generic[TaskTypeVar]):
     def labels(self) -> frozenset[str]:
         """Frozenset of labels associated with this worker"""
         return self._labels
+    @property
+    def iterator(self) -> tqdm:
+        """Return the tqdm iterator for the graph."""
+        if self._iterator is None:
+            raise ValueError("Iterator not initialized. Call __iter__() first.")
+        return self._iterator
 
     def __iter__(self) -> Iterator[Task[TaskTypeVar]]:
         """The generator that handles the iteration logic."""
 
         self._close_trigger = False  # reset close_trigger on new iter call
 
-        self.iterator = tqdm(
+        self._iterator = tqdm(
             (
                 node
                 for node in chain(list(self._failed_job_cache.values()), self.graph_fn)
@@ -254,15 +260,15 @@ class Graphband(t.Generic[TaskTypeVar]):
             **self.tqdm_kwargs,
         )
         try:
-            self.iterator.total = len(self.graph_fn) + len(self._failed_job_cache)
+            self._iterator.total = len(self.graph_fn) + len(self._failed_job_cache)
         except TypeError:
             pass
         if self.disabled:
             # If disabled, just iterate over the graph protocol
-            yield from self.iterator
+            yield from self._iterator
             return
 
-        for task in self.iterator:
+        for task in self._iterator:
             if not task.requirements.issubset(self.labels):
                 log.debug(
                     f"Task {task.id} requires labels {task.requirements}, skipping worker {self.identifier} with labels: {self.labels}"
