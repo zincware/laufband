@@ -48,8 +48,33 @@ def graph_task():
         yield Task(
             id=node,
             data=node,
-            dependencies=digraph.predecessors(node),
+            dependencies=set(digraph.predecessors(node)),
             requirements=digraph.nodes[node].get("requirements", {"main"}),
+        )
+
+
+def multi_dependency_graph_task():
+    """Create a graph where some tasks depend on multiple previous tasks.
+
+    Graph structure:
+    a --> c
+    b --> c  (c depends on both a and b)
+    c --> e
+    d --> e  (e depends on both c and d)
+    """
+    digraph = nx.DiGraph()
+    edges = [
+        ("a", "c"),
+        ("b", "c"),
+        ("c", "e"),
+        ("d", "e"),
+    ]
+    digraph.add_edges_from(edges)
+    for node in nx.topological_sort(digraph):
+        yield Task(
+            id=node,
+            data=node,
+            dependencies=set(digraph.predecessors(node)),
         )
 
 
@@ -446,3 +471,57 @@ def test_graph_task(tmp_path):
     ]  # the "b", "d", "e" are in the b-branch which should not be run
     items = [x.id for x in w1]
     assert items == ["b", "d", "e"]
+
+    expected_dependencies = {
+        "a": [],
+        "b": ["a"],
+        "c": ["a"],
+        "d": ["b"],
+        "e": ["b"],
+        "f": ["c"],
+        "g": ["c"],
+    }
+    with Session(w1._engine) as session:
+        entries = {}
+        for task_id in expected_dependencies:
+            entry = session.query(TaskEntry).filter(TaskEntry.id == task_id).first()
+            assert entry is not None
+            assert entry.current_status.status == TaskStatusEnum.COMPLETED
+            entries[task_id] = entry
+
+        for task_id, deps in expected_dependencies.items():
+            assert sorted(
+                [e.id for e in entries[task_id].current_status.dependencies]
+            ) == sorted(deps)
+
+
+def test_multi_dependency_graph_task(tmp_path):
+    """Test task execution with multiple dependencies per task."""
+    worker = Graphband(
+        multi_dependency_graph_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+    )
+    items = [x.id for x in worker]
+    assert set(items) == {"a", "b", "c", "d", "e"}
+
+    expected_dependencies = {
+        "a": [],
+        "b": [],
+        "c": ["a", "b"],
+        "d": [],
+        "e": ["c", "d"],
+    }
+
+    with Session(worker._engine) as session:
+        entries = {}
+        for task_id in expected_dependencies:
+            entry = session.query(TaskEntry).filter(TaskEntry.id == task_id).first()
+            assert entry is not None
+            assert entry.current_status.status == TaskStatusEnum.COMPLETED
+            entries[task_id] = entry
+
+        for task_id, deps in expected_dependencies.items():
+            assert sorted(
+                [e.id for e in entries[task_id].current_status.dependencies]
+            ) == sorted(deps)

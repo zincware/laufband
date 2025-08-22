@@ -352,7 +352,6 @@ class Graphband(t.Generic[TaskTypeVar]):
                             raise ValueError("Workflow 'main' not found.")
                         task_entry = TaskEntry(
                             id=task.id,
-                            # dependencies=task.dependencies,
                             requirements=list(task.requirements),
                             max_parallel_workers=task.max_parallel_workers,
                             workflow=workflow,
@@ -379,14 +378,15 @@ class Graphband(t.Generic[TaskTypeVar]):
                         task_entry = session.get(TaskEntry, task.id)
                         if task_entry is None:
                             raise ValueError(f"Task with id {task.id} not found.")
-                        task_entry.statuses.append(
-                            TaskStatusEntry(status=TaskStatusEnum.FAILED, worker=worker)
-                        )
                         worker = session.get(WorkerEntry, self._identifier)
                         if worker is None:
                             raise ValueError(
                                 f"Worker with id {self._identifier} not found."
                             )
+                        task_entry.statuses.append(
+                            TaskStatusEntry(status=TaskStatusEnum.FAILED, worker=worker)
+                        )
+
                         worker.status = WorkerStatus.IDLE
                         session.commit()
                     break
@@ -395,14 +395,29 @@ class Graphband(t.Generic[TaskTypeVar]):
                     task_entry = session.get(TaskEntry, task.id)
                     if task_entry is None:
                         raise ValueError(f"Task with id {task.id} not found.")
-                    task_entry.statuses.append(
-                        TaskStatusEntry(status=TaskStatusEnum.COMPLETED, worker=worker)
-                    )
                     worker = session.get(WorkerEntry, self._identifier)
                     if worker is None:
                         raise ValueError(
                             f"Worker with id {self._identifier} not found."
                         )
+                    dependencies = []
+                    for dep_id in task.dependencies:
+                        dep_entry = session.get(TaskEntry, dep_id)
+                        if dep_entry is None:
+                            # should not happen
+                            raise ValueError(f"Dependency {dep_id} not found.")
+                        if dep_entry.current_status.status != TaskStatusEnum.COMPLETED:
+                            # should not happen
+                            raise ValueError(f"Dependency {dep_id} is not completed.")
+                        dependencies.append(dep_entry)
+
+                    task_entry.statuses.append(
+                        TaskStatusEntry(
+                            status=TaskStatusEnum.COMPLETED,
+                            worker=worker,
+                            dependencies=dependencies,
+                        )
+                    )
                     worker.status = WorkerStatus.IDLE
                     session.commit()
             if self._close_trigger:
