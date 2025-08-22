@@ -24,7 +24,7 @@ from laufband.db import TaskStatusEnum
 from laufband.monitor import Monitor
 
 app = typer.Typer(help="Laufband CLI Tool")
-ACTIVITY_TIMEOUT_SECONDS = 300  # 5 minutes
+ACTIVITY_TIMEOUT_SECONDS = 60  # 1 minute # can be handled better via the db expired directly.
 
 
 class LaufbandStatusDisplay:

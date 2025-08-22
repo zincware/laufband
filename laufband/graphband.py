@@ -227,7 +227,8 @@ class Graphband(t.Generic[TaskTypeVar]):
                 session.commit()
 
     def __del__(self):
-        self._thread_event.set()
+        if hasattr(self, '_thread_event'):
+            self._thread_event.set()
 
     def close(self):
         """Exit out of the graphband generator.
