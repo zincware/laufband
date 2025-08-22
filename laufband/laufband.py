@@ -54,4 +54,7 @@ class Laufband(Graphband[TaskTypeVar]):
 
     def __iter__(self) -> t.Iterator[TaskTypeVar]:
         for task in super().__iter__():
-            yield task.data
+            # task.data is TaskTypeVar|None but
+            # for laufband it is always TaskTypeVar so we 
+            # type ignore it here.
+            yield task.data  # type: ignore[misc]
