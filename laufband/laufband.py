@@ -2,27 +2,25 @@ import typing as t
 from collections.abc import Iterable
 
 from laufband.graphband import Graphband
-from laufband.task import Task
-
-_T = t.TypeVar("_T", covariant=True)
+from laufband.task import Task, TaskTypeVar
 
 
-class SequentialGraphIterator:
-    def __init__(self, data):
-        self.data = data
+class SequentialGraphIterator(t.Generic[TaskTypeVar]):
+    def __init__(self, data: Iterable[TaskTypeVar]):
+        self.data = list(data)
 
     def __len__(self):
         return len(self.data)
 
-    def __iter__(self):
+    def __iter__(self) -> t.Iterator[Task[TaskTypeVar]]:
         for idx, item in enumerate(self.data):
             yield Task(id=str(idx), data=item)
 
 
-class Laufband(Graphband[_T]):
+class Laufband(Graphband[TaskTypeVar]):
     def __init__(
         self,
-        data: Iterable[_T],
+        data: Iterable[TaskTypeVar],
         **kwargs,
     ):
         """Laufband generator for parallel processing using file-based locking.
@@ -54,6 +52,7 @@ class Laufband(Graphband[_T]):
             kwargs["db"] = "sqlite:///laufband.sqlite"
         super().__init__(graph_fn=SequentialGraphIterator(data=data), **kwargs)
 
-    def __iter__(self):
+    def __iter__(self) -> t.Iterator[TaskTypeVar]:
         for task in super().__iter__():
-            yield task.data
+            if task.data is not None:
+                yield task.data

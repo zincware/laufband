@@ -1,9 +1,11 @@
 import dataclasses
 import typing as t
 
+TaskTypeVar = t.TypeVar("TaskTypeVar")
+
 
 @dataclasses.dataclass(frozen=True)
-class Task:
+class Task(t.Generic[TaskTypeVar]):
     """
     Represents a task with associated data, dependencies, and requirements.
 
@@ -25,7 +27,7 @@ class Task:
     """
 
     id: str
-    data: t.Any | None = None
+    data: TaskTypeVar | None = None
     dependencies: set[str] = dataclasses.field(default_factory=set)
     requirements: set[str] = dataclasses.field(default_factory=set)
     info: dict[str, t.Any] = dataclasses.field(default_factory=dict)

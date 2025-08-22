@@ -3,7 +3,7 @@ import os
 import socket
 import threading
 import typing as t
-from collections.abc import Generator, Iterator
+from collections.abc import Iterator
 from contextlib import ExitStack, nullcontext
 from itertools import chain
 from pathlib import Path
@@ -22,11 +22,9 @@ from laufband.db import (
     WorkerStatus,
 )
 from laufband.hearbeat import heartbeat
-from laufband.task import Task
+from laufband.task import Task, TaskTypeVar
 
 log = logging.getLogger(__name__)
-
-_T = t.TypeVar("_T", covariant=True)
 
 # Issue, if we have a generator like ase.io.iread we don't want to fully iterate it at each __next__
 # If we have a dynamik graph, we need to iterate it at each __next__
@@ -57,7 +55,7 @@ class MultiLock:
         return self._stack.__exit__(exc_type, exc_val, exc_tb)
 
 
-class GraphTraversalProtocol(t.Protocol):
+class GraphTraversalProtocol(t.Protocol[TaskTypeVar]):
     """Protocol for iterating over a graph's nodes and their predecessors.
 
     Yields
@@ -73,10 +71,10 @@ class GraphTraversalProtocol(t.Protocol):
     ...     yield Task(id=node, dependencies=set(g.predecessors(node)))
     """
 
-    def __iter__(self) -> Iterator[Task]: ...
+    def __iter__(self) -> Iterator[Task[TaskTypeVar]]: ...
 
 
-class SizedGraphTraversalProtocol(GraphTraversalProtocol):
+class SizedGraphTraversalProtocol(GraphTraversalProtocol[TaskTypeVar]):
     """
     Protocol for graph traversal that also supports __len__.
 
@@ -104,26 +102,11 @@ class SizedGraphTraversalProtocol(GraphTraversalProtocol):
     def __len__(self) -> int: ...
 
 
-def _check_disabled(func: t.Callable) -> t.Callable:
-    """Decorator to raise an error if Graphband is disabled."""
-
-    def wrapper(self, *args, **kwargs):
-        if self.disabled:
-            raise RuntimeError("Graphband is disabled. Cannot call this method.")
-        return func(self, *args, **kwargs)
-
-    return wrapper
-
-
-# def _default_hash_fn(item: t.Any) -> str:
-#     """Default hash function for tasks (deterministic across processes)."""
-#     return hashlib.sha256(str(item).encode()).hexdigest()
-
-
-class Graphband(t.Generic[_T]):
+class Graphband(t.Generic[TaskTypeVar]):
     def __init__(
         self,
-        graph_fn: GraphTraversalProtocol | SizedGraphTraversalProtocol,
+        graph_fn: GraphTraversalProtocol[TaskTypeVar]
+        | SizedGraphTraversalProtocol[TaskTypeVar],
         *,
         lock: Lock = Lock(Path("graphband.lock").as_posix()),
         db: str = "sqlite:///graphband.sqlite",
@@ -177,7 +160,7 @@ class Graphband(t.Generic[_T]):
             Additional arguments to pass to tqdm.
         """
         self.disabled = disabled
-        self.graph_fn: GraphTraversalProtocol = graph_fn
+        self.graph_fn: GraphTraversalProtocol[TaskTypeVar] = graph_fn
         self._lock = lock if not disabled else nullcontext()
         self._close_trigger = False
         self.failure_policy = failure_policy
@@ -258,7 +241,7 @@ class Graphband(t.Generic[_T]):
         """Frozenset of labels associated with this worker"""
         return self._labels
 
-    def __iter__(self) -> Generator[Task, None, None]:
+    def __iter__(self) -> Iterator[Task[TaskTypeVar]]:
         """The generator that handles the iteration logic."""
 
         self._close_trigger = False  # reset close_trigger on new iter call

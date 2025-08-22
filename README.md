@@ -43,7 +43,7 @@ output_file = Path("data.json")
 output_file.write_text(json.dumps({"processed_data": []}))
 data = list(range(100))
 
-worker = Laufband(data, desc="using Laufband")
+worker = Laufband(data, tqdm_kwargs={"desc": "using Laufband"})
 
 for item in worker:
     # Simulate some computationally intensive task
@@ -130,7 +130,8 @@ worker = Laufband(list(s22))
 
 for atoms in worker:
     atoms.calc = calc
-    atoms.get_potential_energy()
+    energy = atoms.get_potential_energy()
+    worker.iterator.set_description(f"{energy = }")
     with worker.lock:
         ase.io.write("frames.xyz", atoms, append=True)
 ```

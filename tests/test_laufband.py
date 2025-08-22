@@ -27,4 +27,3 @@ def test_laufband_length_with_generator_raises_error(tmp_path):
     results = list(laufband)
     assert len(results) == 10
     assert set(results) == set(range(10))
-
