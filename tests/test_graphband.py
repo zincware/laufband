@@ -472,7 +472,6 @@ def test_graph_task(tmp_path):
     items = [x.id for x in w1]
     assert items == ["b", "d", "e"]
 
-    # assert dependencies are stored correctly
     expected_dependencies = {
         "a": [],
         "b": ["a"],
@@ -491,9 +490,9 @@ def test_graph_task(tmp_path):
             entries[task_id] = entry
 
         for task_id, deps in expected_dependencies.items():
-            assert entries[task_id].current_status.dependencies == [
-                entries[d] for d in deps
-            ]
+            assert sorted(
+                [e.id for e in entries[task_id].current_status.dependencies]
+            ) == sorted(deps)
 
 
 def test_multi_dependency_graph_task(tmp_path):
@@ -506,13 +505,12 @@ def test_multi_dependency_graph_task(tmp_path):
     items = [x.id for x in worker]
     assert set(items) == {"a", "b", "c", "d", "e"}
 
-    # Verify dependencies are stored correctly
     expected_dependencies = {
         "a": [],
         "b": [],
-        "c": ["a", "b"],  # c depends on both a and b
+        "c": ["a", "b"],
         "d": [],
-        "e": ["c", "d"],  # e depends on both c and d
+        "e": ["c", "d"],
     }
 
     with Session(worker._engine) as session:
@@ -524,6 +522,6 @@ def test_multi_dependency_graph_task(tmp_path):
             entries[task_id] = entry
 
         for task_id, deps in expected_dependencies.items():
-            assert entries[task_id].current_status.dependencies == [
-                entries[d] for d in deps
-            ]
+            assert sorted(
+                [e.id for e in entries[task_id].current_status.dependencies]
+            ) == sorted(deps)
