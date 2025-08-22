@@ -127,7 +127,6 @@ class TaskStatusEntry(Base):
     dependencies: Mapped[List["TaskEntry"]] = relationship(
         "TaskEntry",
         secondary=task_dependencies,
-        overlaps="task",
     )
 
 
@@ -146,7 +145,6 @@ class TaskEntry(Base):
         back_populates="task",
         cascade="all, delete-orphan",
         order_by="TaskStatusEntry.timestamp",
-        overlaps="dependencies",
     )
 
     max_parallel_workers: Mapped[int] = mapped_column(Integer, default=1)
