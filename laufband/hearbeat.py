@@ -31,9 +31,8 @@ def heartbeat(lock: Lock, db: str, identifier: str, stop_event: threading.Event)
                     worker.status = WorkerStatus.KILLED
                     for task in worker.running_tasks:
                         task_status = TaskStatusEntry(
-                            status=TaskStatusEnum.KILLED, worker=worker
+                            status=TaskStatusEnum.KILLED, worker=worker, task=task
                         )
-                        task.statuses.append(task_status)
                         session.add(task_status)
                     session.add(worker)
             session.commit()
