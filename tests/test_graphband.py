@@ -525,3 +525,248 @@ def test_multi_dependency_graph_task(tmp_path):
             assert sorted(
                 [e.id for e in entries[task_id].current_status.dependencies]
             ) == sorted(deps)
+
+
+def test_has_more_jobs(tmp_path):
+    worker = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+    )
+    assert worker.has_more_jobs is True
+    for item in worker:
+        if item.id == "task_5":
+            break
+    # there are still 4 remaining tasks
+    assert worker.has_more_jobs is True
+
+    assert len(list(worker)) == 4
+    # won't pick up the failed job
+    assert worker.has_more_jobs is False
+
+    w2 = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        max_failed_retries=2,
+        identifier="retry-worker",
+    )
+    # will pick up the failed job
+    assert w2.has_more_jobs is True
+    assert len(list(w2)) == 1
+    assert w2.has_more_jobs is False
+
+    w3 = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        max_failed_retries=2,
+        identifier="retry-worker-2",
+    )
+    assert w3.has_more_jobs is False  # all jobs are no completed succesfully
+
+
+def blocked_dependency_graph_task():
+    """Create a graph where task b blocks task c due to label requirements.
+
+    Graph structure:
+    a --> b --> c
+    Where b requires 'special-worker' label, but a and c require 'main' label.
+    """
+    digraph = nx.DiGraph()
+    edges = [
+        ("a", "b"),
+        ("b", "c"),
+    ]
+    digraph.add_edges_from(edges)
+    digraph.nodes["b"]["requirements"] = {"special-worker"}
+    for node in nx.topological_sort(digraph):
+        yield Task(
+            id=node,
+            data=node,
+            dependencies=set(digraph.predecessors(node)),
+            requirements=digraph.nodes[node].get("requirements", {"main"}),
+        )
+
+
+def test_has_more_jobs_with_blocked_dependencies(tmp_path):
+    """Test has_more_jobs when dependencies are blocked by label mismatches.
+
+    This test verifies the TODO scenario where:
+    - a --> b --> c dependency chain
+    - b needs a different label than a, c
+    - has_more_jobs for the a/c worker should be true until c is completed
+    - but the worker won't be able to pick up c because b isn't completed
+    """
+    # Worker that can process 'main' tasks (a and c) but not 'special-worker' tasks (b)
+    main_worker = Graphband(
+        blocked_dependency_graph_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        labels={"main"},
+        identifier="main-worker",
+    )
+
+    # Initially should have jobs available
+    assert main_worker.has_more_jobs is True
+
+    # Process available tasks - should only get task 'a'
+    items = list(main_worker)
+    assert len(items) == 1
+    assert items[0].id == "a"
+
+    # After processing 'a', should still have more jobs (task 'c' exists but is blocked)
+    # This is the key behavior: has_more_jobs returns True even though this worker
+    # cannot make progress because 'c' depends on 'b' which requires different labels
+    assert main_worker.has_more_jobs is True
+
+    # Trying to iterate again should yield nothing since 'c' is blocked by 'b'
+    items_second = list(main_worker)
+    assert len(items_second) == 0
+
+    # Should still report more jobs available (task 'c' is incomplete)
+    assert main_worker.has_more_jobs is True
+
+    # Now create a worker that can process the 'special-worker' task 'b'
+    special_worker = Graphband(
+        blocked_dependency_graph_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        labels={"special-worker"},
+        identifier="special-worker",
+    )
+
+    # Special worker should have jobs (task 'b')
+    assert special_worker.has_more_jobs is True
+
+    # Process task 'b'
+    items_special = list(special_worker)
+    assert len(items_special) == 1
+    assert items_special[0].id == "b"
+
+    # After 'b' is complete, special worker should have no more jobs
+    assert special_worker.has_more_jobs is False
+
+    # Now main worker should be able to process task 'c'
+    assert main_worker.has_more_jobs is True
+
+    items_final = list(main_worker)
+    assert len(items_final) == 1
+    assert items_final[0].id == "c"
+
+    # Finally, no more jobs for either worker
+    assert main_worker.has_more_jobs is False
+    assert special_worker.has_more_jobs is False
+
+
+# TODO: need to check that this LLM Agent generated test makes sense!
+def test_has_more_jobs_with_killed_workers(tmp_path):
+    """Test has_more_jobs behavior when workers are killed and tasks exceed retry limits."""
+    # Test case where killed tasks cannot be retried (max_killed_retries=0)
+    lock_path = f"{tmp_path}/graphband.lock"
+    db = f"sqlite:///{tmp_path}/graphband.sqlite"
+    file = f"{tmp_path}/output.txt"
+
+    # Start a worker that will be killed with no retry allowance
+    proc = multiprocessing.Process(
+        target=task_worker,
+        args=(sequential_task, lock_path, db, file, 3),
+        kwargs={
+            "heartbeat_timeout": 2,
+            "heartbeat_interval": 1,
+            "max_killed_retries": 0,  # No retries allowed for killed tasks
+            "identifier": "killed-worker",
+        },
+    )
+    proc.start()
+    time.sleep(0.5)  # Let the worker start one task
+    proc.kill()
+    proc.join()
+
+    # Wait for heartbeat to expire and task to be marked as killed
+    time.sleep(3)
+
+    # Create a new worker to verify has_more_jobs behavior
+    check_worker = Graphband(
+        sequential_task(),
+        db=db,
+        lock=Lock(lock_path),
+        heartbeat_timeout=2,
+        heartbeat_interval=1,
+        max_killed_retries=0,  # Same retry limit
+        identifier="check-worker",
+    )
+
+    # Should have more jobs initially (remaining tasks that weren't killed)
+    assert check_worker.has_more_jobs is True
+
+    # Process remaining tasks (killed task should not be retried)
+    items = list(check_worker)
+    assert len(items) == 9  # Should process 9 tasks (excluding the killed one)
+
+    # Should have no more jobs after processing all retryable tasks
+    assert check_worker.has_more_jobs is False
+
+    # Verify the killed task is permanently blocked
+    engine = create_engine(db)
+    with Session(engine) as session:
+        tasks = session.query(TaskEntry).all()
+        killed_task = next(
+            (t for t in tasks if t.current_status.status == TaskStatusEnum.KILLED), None
+        )
+        assert killed_task is not None
+        assert killed_task.killed_retries > 0
+
+        # Verify we have exactly one killed task and 9 completed tasks
+        killed_tasks = [
+            t for t in tasks if t.current_status.status == TaskStatusEnum.KILLED
+        ]
+        completed_tasks = [
+            t for t in tasks if t.current_status.status == TaskStatusEnum.COMPLETED
+        ]
+        assert len(killed_tasks) == 1
+        assert len(completed_tasks) == 9
+
+    # Test case where killed tasks CAN be retried (max_killed_retries=2)
+    lock_path2 = f"{tmp_path}/graphband2.lock"
+    db2 = f"sqlite:///{tmp_path}/graphband2.sqlite"
+    file2 = f"{tmp_path}/output2.txt"
+
+    proc2 = multiprocessing.Process(
+        target=task_worker,
+        args=(sequential_task, lock_path2, db2, file2, 3),
+        kwargs={
+            "heartbeat_timeout": 2,
+            "heartbeat_interval": 1,
+            "max_killed_retries": 2,  # Allow retries for killed tasks
+            "identifier": "killed-worker-2",
+        },
+    )
+    proc2.start()
+    time.sleep(0.5)  # Let it start one task
+    proc2.kill()
+    proc2.join()
+
+    # Wait for heartbeat to expire
+    time.sleep(3)
+
+    # Create worker that can retry killed tasks
+    retry_worker = Graphband(
+        sequential_task(),
+        db=db2,
+        lock=Lock(lock_path2),
+        heartbeat_timeout=2,
+        heartbeat_interval=1,
+        max_killed_retries=2,  # Allow retries
+        identifier="retry-worker",
+    )
+
+    # Should have more jobs (including retryable killed task)
+    assert retry_worker.has_more_jobs is True
+
+    # Process all tasks including retry of killed task
+    retry_items = list(retry_worker)
+    assert len(retry_items) == 10  # Should process all 10 tasks
+
+    # Should have no more jobs after completion
+    assert retry_worker.has_more_jobs is False
