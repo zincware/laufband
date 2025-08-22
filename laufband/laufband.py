@@ -54,5 +54,4 @@ class Laufband(Graphband[TaskTypeVar]):
 
     def __iter__(self) -> t.Iterator[TaskTypeVar]:
         for task in super().__iter__():
-            if task.data is not None:
-                yield task.data
+            yield task.data

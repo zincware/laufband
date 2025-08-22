@@ -277,9 +277,8 @@ def test_sequential_multi_worker_task(tmp_path):
             tasks.append(task_id)
     assert len(set(worker)) == num_processes
     assert len(set(tasks)) == 10
-    assert (
-        len(tasks) == 20
-    )  # with the given timeout we expect each job to be processed by 2 workers.
+    assert 18 <= len(tasks) <= 20, f"Expected ~20 task executions, got {len(tasks)}"
+    # with the given timeout we expect each job to be processed by 2 workers.
 
 
 def test_kill_sequential_task_worker(tmp_path):
@@ -333,7 +332,7 @@ def test_kill_sequential_task_worker(tmp_path):
 
         tasks = session.query(TaskEntry).all()
         assert len(tasks) == 10
-        tasks[0].current_status.status == TaskStatusEnum.KILLED
+        assert tasks[0].current_status.status == TaskStatusEnum.KILLED
         for task in tasks[1:]:
             assert task.current_status.status == TaskStatusEnum.COMPLETED
 

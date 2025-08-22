@@ -180,7 +180,7 @@ Given this generator, you can iterate the graph in parallel using `laufband.Grap
 ```py
 from laufband import Graphband
 
-worker = Graphband(graph_task())
+worker = Graphband(graph_tasks())
 
 for task in worker:
     print(task.id, task.data)
