@@ -1,12 +1,12 @@
 import multiprocessing
+import os
 import time
 import typing as t
 
 import pytest
 from flufl.lock import Lock
-from sqlalchemy.orm import Session
 from sqlalchemy import create_engine
-import os
+from sqlalchemy.orm import Session
 
 from laufband import Graphband, GraphTraversalProtocol, Task
 from laufband.db import TaskEntry, TaskStatusEnum, WorkerEntry, WorkerStatus
@@ -184,7 +184,7 @@ def task_worker(
     db: str,
     file: str,
     timeout: float,
-    **kwargs: dict
+    **kwargs: dict,
 ):
     lock = Lock(lock_path)
     pbar = Graphband(iterator(), lock=lock, db=db, **kwargs)
@@ -250,6 +250,7 @@ def test_sequential_multi_worker_task(tmp_path):
         len(tasks) == 20
     )  # with the given timeout we expect each job to be processed by 2 workers.
 
+
 def test_kill_sequential_task_worker(tmp_path):
     lock_path = f"{tmp_path}/graphband.lock"
     db = f"sqlite:///{tmp_path}/graphband.sqlite"
@@ -261,7 +262,7 @@ def test_kill_sequential_task_worker(tmp_path):
         kwargs={
             "heartbeat_timeout": "2",
             "heartbeat_interval": "1",
-        }
+        },
     )
     proc.start()
     time.sleep(1)  # let the worker start and process about 4 tasks
@@ -278,13 +279,49 @@ def test_kill_sequential_task_worker(tmp_path):
         assert tasks[0].current_status.worker.heartbeat_expired is False
         time.sleep(2)  # wait for the heartbeat to expire
         assert tasks[0].current_status.worker.heartbeat_expired is True
-        
-    task_worker(sequential_task, lock_path, db, file, 0.1, heartbeat_timeout=2, heartbeat_interval=1)
+
+    task_worker(
+        sequential_task,
+        lock_path,
+        db,
+        file,
+        0.1,
+        heartbeat_timeout=2,
+        heartbeat_interval=1,
+    )
 
     with Session(engine) as session:
         w1 = session.get(WorkerEntry, proc.pid)
         assert w1 is not None
         assert w1.status == WorkerStatus.KILLED
+        assert len(w1.running_tasks) == 0
         w2 = session.get(WorkerEntry, os.getpid())
         assert w2 is not None
         assert w2.status == WorkerStatus.OFFLINE
+        assert len(w2.running_tasks) == 0
+
+        tasks = session.query(TaskEntry).all()
+        assert len(tasks) == 10
+        tasks[0].current_status.status == TaskStatusEnum.KILLED
+        for task in tasks[1:]:
+            assert task.current_status.status == TaskStatusEnum.COMPLETED
+
+    task_worker(
+        sequential_task,
+        lock_path,
+        db,
+        file,
+        0.1,
+        heartbeat_timeout=2,
+        heartbeat_interval=1,
+        max_killed_retries=2,
+        identifier="killed-retry-worker",
+    )
+
+    with Session(engine) as session:
+        w3 = session.get(WorkerEntry, "killed-retry-worker")
+        assert w3 is not None
+        assert w3.status == WorkerStatus.OFFLINE
+        tasks = session.query(TaskEntry).all()
+        assert tasks[0].current_status.status == TaskStatusEnum.COMPLETED
+        assert tasks[0].current_status.worker == w3

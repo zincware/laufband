@@ -63,8 +63,10 @@ class WorkerEntry(Base):
     @property
     def heartbeat_expired(self) -> bool:
         """Check if the worker's heartbeat is expired."""
-        return (datetime.now() - self.last_heartbeat).total_seconds() > self.heartbeat_timeout
-    
+        return (
+            datetime.now() - self.last_heartbeat
+        ).total_seconds() > self.heartbeat_timeout
+
     @property
     def running_tasks(self) -> set["TaskEntry"]:
         """Get all running tasks for this worker."""
@@ -120,12 +122,15 @@ class TaskEntry(Base):
     def failed_retries(self) -> int:
         result = sum(1 for x in self.statuses if x.status == TaskStatusEnum.FAILED)
         if result == 0:
-            return -1  # there is no "0" failed retries, just no failed retries and we indicate that with 1
+            return -1  # there is no "0" failed retries, just no failed retries and we indicate that with -1
         return result
 
     @property
     def killed_retries(self) -> int:
-        return sum(1 for x in self.statuses if x.status == TaskStatusEnum.KILLED)
+        result = sum(1 for x in self.statuses if x.status == TaskStatusEnum.KILLED)
+        if result == 0:
+            return -1  # there is no "0" killed retries, just no killed retries and we indicate that with -1
+        return result
 
     @property
     def active_workers(self) -> int:

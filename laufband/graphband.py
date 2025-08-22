@@ -133,7 +133,7 @@ class Graphband(t.Generic[_T]):
         ),
         heartbeat_timeout: int = int(os.getenv("LAUFBAND_HEARTBEAT_TIMEOUT", 60)),
         heartbeat_interval: int = int(os.getenv("LAUFBAND_HEARTBEAT_INTERVAL", 30)),
-        max_died_retries: int = int(os.getenv("LAUFBAND_MAX_DIED_RETRIES", 0)),
+        max_killed_retries: int = int(os.getenv("LAUFBAND_MAX_KILLED_RETRIES", 0)),
         max_failed_retries: int = int(os.getenv("LAUFBAND_MAX_FAILED_RETRIES", 0)),
         disabled: bool = bool(int(os.getenv("LAUFBAND_DISABLED", "0"))),
         tqdm_kwargs: dict[str, t.Any] | None = None,
@@ -183,7 +183,7 @@ class Graphband(t.Generic[_T]):
         self.tqdm_kwargs = tqdm_kwargs or {}
         self._identifier = identifier() if callable(identifier) else identifier
         self._max_failed_retries = max_failed_retries
-        self._max_died_retries = max_died_retries
+        self._max_killed_retries = max_killed_retries
         self._db = db
         self._failed_job_cache = {}  # here we keep track of failed job data to be retried later.
         self.iterator = None
@@ -250,34 +250,6 @@ class Graphband(t.Generic[_T]):
         """Unique identifier of this worker"""
         return self._identifier
 
-    @property
-    @_check_disabled
-    def completed(self) -> list[str]:
-        """Return the task IDs that have been completed."""
-        with self.lock:
-            return self.db.list_state("completed")
-
-    @property
-    @_check_disabled
-    def failed(self) -> list[str]:
-        """Return the task IDs that have failed processing."""
-        with self.lock:
-            return self.db.list_state("failed")
-
-    @property
-    @_check_disabled
-    def running(self) -> list[str]:
-        """Return the task IDs that are currently being processed."""
-        with self.lock:
-            return self.db.list_state("running")
-
-    @property
-    @_check_disabled
-    def died(self) -> list[str]:
-        """Return the task IDs that have been marked as 'died'."""
-        with self.lock:
-            return self.db.list_state("died")
-
     def __iter__(self) -> Generator[Task, None, None]:
         """The generator that handles the iteration logic."""
 
@@ -310,6 +282,11 @@ class Graphband(t.Generic[_T]):
                         if task_entry.failed_retries >= self._max_failed_retries:
                             log.debug(
                                 f"Task {task.id} has failed too many times, skipping."
+                            )
+                            continue
+                        if task_entry.killed_retries >= self._max_killed_retries:
+                            log.debug(
+                                f"Task {task.id} has died too many times, skipping."
                             )
                             continue
                         if not task_entry.worker_availability:
@@ -349,7 +326,9 @@ class Graphband(t.Generic[_T]):
                         )
                         worker = session.get(WorkerEntry, self._identifier)
                         if worker is None:
-                            raise ValueError(f"Worker with id {self._identifier} not found.")
+                            raise ValueError(
+                                f"Worker with id {self._identifier} not found."
+                            )
                         worker.status = WorkerStatus.IDLE
                         session.commit()
                     break
@@ -363,7 +342,9 @@ class Graphband(t.Generic[_T]):
                     )
                     worker = session.get(WorkerEntry, self._identifier)
                     if worker is None:
-                        raise ValueError(f"Worker with id {self._identifier} not found.")
+                        raise ValueError(
+                            f"Worker with id {self._identifier} not found."
+                        )
                     worker.status = WorkerStatus.IDLE
                     session.commit()
             if self._close_trigger:

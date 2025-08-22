@@ -5,7 +5,12 @@ from flufl.lock import Lock
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from laufband.db import WorkerEntry, WorkerStatus, TaskEntry, TaskStatusEntry, TaskStatusEnum
+from laufband.db import (
+    TaskStatusEntry,
+    TaskStatusEnum,
+    WorkerEntry,
+    WorkerStatus,
+)
 
 
 def heartbeat(lock: Lock, db: str, identifier: str, stop_event: threading.Event):
@@ -25,7 +30,9 @@ def heartbeat(lock: Lock, db: str, identifier: str, stop_event: threading.Event)
                 if worker.heartbeat_expired:
                     worker.status = WorkerStatus.KILLED
                     for task in worker.running_tasks:
-                        task_status = TaskStatusEntry(status=TaskStatusEnum.KILLED, worker=worker)
+                        task_status = TaskStatusEntry(
+                            status=TaskStatusEnum.KILLED, worker=worker
+                        )
                         task.statuses.append(task_status)
                         session.add(task_status)
                     session.add(worker)
