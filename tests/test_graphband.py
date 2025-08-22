@@ -1,16 +1,23 @@
-from laufband import Graphband, Task
+import pytest
 from flufl.lock import Lock
 from sqlalchemy.orm import Session
+
+from laufband import Graphband, Task
 from laufband.db import TaskEntry, TaskStatusEnum, WorkerEntry, WorkerStatus
-import pytest
+
 
 def sequential_task():
     for i in range(10):
         yield Task(id=f"task_{i}", data={"value": i})
 
+
 @pytest.mark.human_reviewed
 def test_graphband_sequential_success(tmp_path):
-    pbar = Graphband(sequential_task(), db=f"sqlite:///{tmp_path}/graphband.sqlite", lock=Lock(f"{tmp_path}/graphband.lock"))
+    pbar = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+    )
     items = list(pbar)
 
     assert len(items) == 10
@@ -22,22 +29,35 @@ def test_graphband_sequential_success(tmp_path):
         assert len(tasks) == 10
         for id, task in enumerate(tasks):
             assert task.current_status.status == TaskStatusEnum.COMPLETED
-            assert task.workers == workers
+            assert task.current_status.worker == workers[0]
             assert task.id == f"task_{id}"
 
     # if we no iterate again, we yield nothing
     assert list(pbar) == []
 
+    pbar = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        identifier="2nd-worker",
+    )
+    assert list(pbar) == []  # another iterator won't do anything now
+
+
 @pytest.mark.human_reviewed
 def test_graphband_sequential_close_and_resume(tmp_path):
-    pbar = Graphband(sequential_task(), db=f"sqlite:///{tmp_path}/graphband.sqlite", lock=Lock(f"{tmp_path}/graphband.lock"))
-    
+    pbar = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+    )
+
     items = []
     for item in pbar:
         items.append(item)
         if item.id == "task_5":
-            pbar.close() # this counts as this task succeeded
-        
+            pbar.close()  # this counts as this task succeeded
+
     assert len(items) == 6  # 0 to 5 inclusive
 
     with Session(pbar._engine) as session:
@@ -49,26 +69,33 @@ def test_graphband_sequential_close_and_resume(tmp_path):
 
     for item in pbar:
         items.append(item)
-    
+
     assert len(items) == 10  # 6 to 9 inclusive
     assert len(set(x.id for x in items)) == 10
 
     with Session(pbar._engine) as session:
         tasks = session.query(TaskEntry).all()
         assert len(tasks) == 10
-        assert all(task.current_status.status == TaskStatusEnum.COMPLETED for task in tasks)
+        assert all(
+            task.current_status.status == TaskStatusEnum.COMPLETED for task in tasks
+        )
+
 
 @pytest.mark.human_reviewed
 def test_graphband_sequential_break_and_resume(tmp_path):
-    pbar = Graphband(sequential_task(), db=f"sqlite:///{tmp_path}/graphband.sqlite", lock=Lock(f"{tmp_path}/graphband.lock"))
-    
+    pbar = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+    )
+
     items = []
     for item in pbar:
-        items.append(item)
         if item.id == "task_5":
-            break # this counts as this task failed
+            break  # this counts as this task failed
+        items.append(item)
 
-    assert len(items) == 6  # 0 to 5 inclusive
+    assert len(items) == 5
 
     with Session(pbar._engine) as session:
         tasks = session.query(TaskEntry).all()
@@ -81,8 +108,8 @@ def test_graphband_sequential_break_and_resume(tmp_path):
 
     for item in pbar:
         items.append(item)
-    
-    assert len(items) == 10  # includes the failed task data!
+
+    assert len(items) == 9
 
     with Session(pbar._engine) as session:
         tasks = session.query(TaskEntry).all()
@@ -92,3 +119,50 @@ def test_graphband_sequential_break_and_resume(tmp_path):
                 assert task.current_status.status == TaskStatusEnum.FAILED
             else:
                 assert task.current_status.status == TaskStatusEnum.COMPLETED
+
+
+@pytest.mark.human_reviewed
+def test_graphband_sequential_break_and_retry(tmp_path):
+    pbar = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        max_failed_retries=2,
+    )
+
+    items = []
+    for item in pbar:
+        if item.id == "task_5":
+            break
+        items.append(item)
+
+    assert len(items) == 5
+    assert "task_5" in pbar._failed_job_cache
+    items.extend(list(pbar))
+    assert (
+        len(pbar._failed_job_cache) == 0
+    )  # failed job has been cleaned up after iteration
+    assert (
+        len([x.id for x in items]) == 10
+    )  # the failed task has been retried and added.
+
+    with Session(pbar._engine) as session:
+        task_5 = session.query(TaskEntry).filter(TaskEntry.id == "task_5").first()
+        assert task_5.statuses[0].status == TaskStatusEnum.RUNNING
+        assert task_5.statuses[1].status == TaskStatusEnum.FAILED
+        assert task_5.statuses[2].status == TaskStatusEnum.RUNNING
+        assert task_5.statuses[3].status == TaskStatusEnum.COMPLETED
+
+
+def test_duplicate_worker(tmp_path):
+    _ = Graphband(
+        sequential_task(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+    )
+    with pytest.raises(ValueError, match="Worker with this identifier already exists"):
+        _ = Graphband(
+            sequential_task(),
+            db=f"sqlite:///{tmp_path}/graphband.sqlite",
+            lock=Lock(f"{tmp_path}/graphband.lock"),
+        )

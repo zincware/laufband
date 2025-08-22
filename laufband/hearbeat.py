@@ -1,5 +1,4 @@
 import threading
-import time
 from datetime import datetime
 
 from flufl.lock import Lock
@@ -7,6 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from laufband.db import WorkerEntry, WorkerStatus
+
 
 def heartbeat(lock: Lock, db: str, identifier: str, stop_event: threading.Event):
     engine = create_engine(db, echo=False)

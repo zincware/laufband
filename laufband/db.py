@@ -4,29 +4,20 @@ from typing import List
 
 from sqlalchemy import (
     JSON,
-    Column,
     DateTime,
     Enum,
     ForeignKey,
     Integer,
     String,
-    Table,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
 # from sqlalchemy.orm import MappedAsDataclass
 
 
 # --- Base class ---
 class Base(DeclarativeBase):
     pass
-
-
-task_workers = Table(
-    "task_workers",
-    Base.metadata,
-    Column("task_id", ForeignKey("tasks.id"), primary_key=True),
-    Column("worker_id", ForeignKey("workers.id"), primary_key=True),
-)
 
 
 # --- Enums ---
@@ -54,7 +45,7 @@ class WorkerEntry(Base):
     status: Mapped[WorkerStatus] = mapped_column(Enum(WorkerStatus))
 
     last_heartbeat: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
-    heartbeat_interval: Mapped[int] = mapped_column(Integer, default=30)  # seconds
+    heartbeat_interval: Mapped[int] = mapped_column(Integer, default=30)
 
     labels: Mapped[List[str]] = mapped_column(JSON, default=list)
 
@@ -62,13 +53,13 @@ class WorkerEntry(Base):
     pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
-    tasks: Mapped[List["TaskEntry"]] = relationship(
-        secondary=task_workers,
-        back_populates="workers",
+    # One worker can appear in many TaskStatusEntries
+    task_statuses: Mapped[List["TaskStatusEntry"]] = relationship(
+        back_populates="worker",
     )
 
 
-# --- TaskStatusEntry (history) ---
+# --- TaskStatusEntry ---
 class TaskStatusEntry(Base):
     __tablename__ = "task_statuses"
 
@@ -77,6 +68,12 @@ class TaskStatusEntry(Base):
 
     status: Mapped[TaskStatusEnum] = mapped_column(Enum(TaskStatusEnum))
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    # new: one worker per status
+    worker_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workers.id"), nullable=True
+    )
+    worker: Mapped[WorkerEntry] = relationship(back_populates="task_statuses")
 
     task: Mapped["TaskEntry"] = relationship(back_populates="statuses")
 
@@ -88,7 +85,6 @@ class TaskEntry(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     requirements: Mapped[List[str]] = mapped_column(JSON, default=list)
 
-    # one-to-many to TaskStatusEntry
     statuses: Mapped[List[TaskStatusEntry]] = relationship(
         back_populates="task",
         cascade="all, delete-orphan",
@@ -96,10 +92,19 @@ class TaskEntry(Base):
     )
 
     max_parallel_workers: Mapped[int] = mapped_column(Integer, default=1)
-    workers: Mapped[List[WorkerEntry]] = relationship(
-        secondary=task_workers,
-    )
 
     @property
     def current_status(self) -> TaskStatusEntry | None:
         return self.statuses[-1] if self.statuses else None
+
+    @property
+    def failed_retries(self) -> int:
+        return sum(
+            1 for status in self.statuses if status.status == TaskStatusEnum.FAILED
+        )
+
+    @property
+    def killed_retries(self) -> int:
+        return sum(
+            1 for status in self.statuses if status.status == TaskStatusEnum.KILLED
+        )

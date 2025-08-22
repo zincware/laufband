@@ -1,11 +1,11 @@
-import hashlib
 import os
+import socket
 import threading
 import typing as t
-from collections.abc import Callable, Generator, Iterator
-from contextlib import nullcontext
+from collections.abc import Generator, Iterator
+from contextlib import ExitStack, nullcontext
+from itertools import chain
 from pathlib import Path
-import socket
 
 from flufl.lock import Lock
 from sqlalchemy import create_engine
@@ -14,18 +14,14 @@ from tqdm import tqdm
 
 from laufband.db import (
     Base,
+    TaskEntry,
+    TaskStatusEntry,
+    TaskStatusEnum,
     WorkerEntry,
     WorkerStatus,
-    TaskEntry,
-    TaskStatusEnum,
-    TaskStatusEntry,
 )
 from laufband.hearbeat import heartbeat
 from laufband.task import Task
-
-
-import threading
-from contextlib import ExitStack
 
 _T = t.TypeVar("_T", covariant=True)
 
@@ -39,7 +35,6 @@ _T = t.TypeVar("_T", covariant=True)
 # Need to define a recheck-interval.
 # dynamik graph building is realized by restarting the process.
 # for dynamik graph building, if an entry allready exists but has received a new dependency, for now raise an error.
-
 
 
 class MultiLock:
@@ -135,6 +130,7 @@ class Graphband(t.Generic[_T]):
         ),
         heartbeat_timeout: int = int(os.getenv("LAUFBAND_HEARTBEAT_TIMEOUT", 60 * 60)),
         max_died_retries: int = int(os.getenv("LAUFBAND_MAX_DIED_RETRIES", 0)),
+        max_failed_retries: int = int(os.getenv("LAUFBAND_MAX_FAILED_RETRIES", 0)),
         disabled: bool = bool(int(os.getenv("LAUFBAND_DISABLED", "0"))),
         tqdm_kwargs: dict[str, t.Any] | None = None,
     ):
@@ -182,7 +178,10 @@ class Graphband(t.Generic[_T]):
         self.failure_policy = failure_policy
         self.tqdm_kwargs = tqdm_kwargs or {}
         self._identifier = identifier() if callable(identifier) else identifier
+        self._max_failed_retries = max_failed_retries
+        self._max_died_retries = max_died_retries
         self._db = db
+        self._failed_job_cache = {}  # here we keep track of failed job data to be retried later.
 
         if not self.disabled:
             # we need to lock between threads and workers,
@@ -207,8 +206,14 @@ class Graphband(t.Generic[_T]):
         with self.lock:
             Base.metadata.create_all(self._engine)
             with Session(self._engine) as session:
+                # check if a worker with the given identifier already exists
+                if session.get(WorkerEntry, self._identifier) is not None:
+                    raise ValueError("Worker with this identifier already exists")
                 worker_entry = WorkerEntry(
-                    id=self._identifier, status=WorkerStatus.IDLE, hostname=socket.gethostname(), pid=os.getpid()
+                    id=self._identifier,
+                    status=WorkerStatus.IDLE,
+                    hostname=socket.gethostname(),
+                    pid=os.getpid(),
                 )
                 session.add(worker_entry)
                 session.commit()
@@ -267,9 +272,15 @@ class Graphband(t.Generic[_T]):
     def __iter__(self) -> Generator[Task, None, None]:
         """The generator that handles the iteration logic."""
 
-        self._close_trigger = False # reset close_trigger on new iter call
+        self._close_trigger = False  # reset close_trigger on new iter call
 
-        iterator = tqdm((node for node in self.graph_fn), **self.tqdm_kwargs)
+        iterator = tqdm(
+            (
+                node
+                for node in chain(list(self._failed_job_cache.values()), self.graph_fn)
+            ),
+            **self.tqdm_kwargs,
+        )
         if self.disabled:
             # If disabled, just iterate over the graph protocol
             yield from iterator
@@ -278,38 +289,39 @@ class Graphband(t.Generic[_T]):
         for task in iterator:
             with self.lock:
                 with Session(self._engine) as session:
-                    existing_task = session.get(TaskEntry, task.id)
-                    if existing_task:
-                        # TODO: handle stuff like retires here later.
-                        continue
-                    # create the task
+                    task_entry = session.get(TaskEntry, task.id)
+                    if task_entry:
+                        if task_entry.failed_retries >= self._max_failed_retries:
+                            continue
+                    else:
+                        task_entry = TaskEntry(
+                            id=task.id,
+                            # dependencies=task.dependencies,
+                            requirements=list(task.requirements),
+                            max_parallel_workers=task.max_parallel_workers,
+                        )
                     worker = session.get(WorkerEntry, self._identifier)
                     if worker is None:
                         raise ValueError(
                             f"Worker with identifier {self._identifier} not found."
                         )
-                    task_entry = TaskEntry(
-                        id=task.id,
-                        # dependencies=task.dependencies,
-                        requirements=list(task.requirements),
-                        max_parallel_workers=task.max_parallel_workers,
+                    task_entry.statuses.append(
+                        TaskStatusEntry(status=TaskStatusEnum.RUNNING, worker=worker)
                     )
-                    task_entry.workers.append(worker)
-                    task_entry.statuses.append(TaskStatusEntry(
-                        status=TaskStatusEnum.RUNNING
-                    ))
                     session.add(task_entry)
                     session.commit()
             try:
                 yield task
+                self._failed_job_cache.pop(task.id, None)
             except GeneratorExit:
+                self._failed_job_cache[task.id] = task
                 with Session(self._engine) as session:
                     task_entry = session.get(TaskEntry, task.id)
                     if task_entry is None:
                         raise ValueError(f"Task with id {task.id} not found.")
-                    task_entry.statuses.append(TaskStatusEntry(
-                        status=TaskStatusEnum.FAILED
-                    ))
+                    task_entry.statuses.append(
+                        TaskStatusEntry(status=TaskStatusEnum.FAILED, worker=worker)
+                    )
                     session.commit()
                 break
 
@@ -317,9 +329,9 @@ class Graphband(t.Generic[_T]):
                 task_entry = session.get(TaskEntry, task.id)
                 if task_entry is None:
                     raise ValueError(f"Task with id {task.id} not found.")
-                task_entry.statuses.append(TaskStatusEntry(
-                    status=TaskStatusEnum.COMPLETED
-                ))
+                task_entry.statuses.append(
+                    TaskStatusEntry(status=TaskStatusEnum.COMPLETED, worker=worker)
+                )
                 session.commit()
             if self._close_trigger:
                 break
