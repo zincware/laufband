@@ -20,7 +20,7 @@ from rich.progress import (
 from rich.table import Table
 from rich.text import Text
 
-from laufband.db import TaskStatusEnum
+from laufband.db import TaskStatusEnum, WorkerStatus
 from laufband.monitor import Monitor
 
 app = typer.Typer(help="Laufband CLI Tool")
@@ -71,8 +71,8 @@ class LaufbandStatusDisplay:
             worker_info = []
 
             for worker in workers:
-                # Count running tasks for this worker
-                running_tasks = len(worker.running_tasks)
+                # Count processed tasks for this worker
+                processed_tasks = len(self.monitor.get_tasks(state=TaskStatusEnum.COMPLETED, worker=worker))
 
                 worker_info.append(
                     {
@@ -81,7 +81,7 @@ class LaufbandStatusDisplay:
                         "last_heartbeat": worker.last_heartbeat.strftime(
                             "%Y-%m-%d %H:%M:%S"
                         ),
-                        "running_tasks": running_tasks,
+                        "processed_tasks": processed_tasks,
                         "hostname": worker.hostname or "Unknown",
                         "pid": worker.pid or 0,
                         "labels": ", ".join(worker.labels) if worker.labels else "None",
@@ -177,7 +177,7 @@ class LaufbandStatusDisplay:
         table.add_column("Worker ID", style="cyan")
         table.add_column("Status", style="yellow")
         table.add_column("Last Heartbeat", style="white")
-        table.add_column("Running Tasks", justify="right", style="magenta")
+        table.add_column("Processed Tasks", justify="right", style="magenta")
         table.add_column("Hostname", style="green")
         table.add_column("PID", justify="right", style="blue")
         table.add_column("Labels", style="dim")
@@ -193,15 +193,15 @@ class LaufbandStatusDisplay:
                 time_diff = (now - last_heartbeat).total_seconds()
 
                 status = worker["status"]
-                if time_diff > ACTIVITY_TIMEOUT_SECONDS:
+                if time_diff > ACTIVITY_TIMEOUT_SECONDS and status in [WorkerStatus.IDLE.value, WorkerStatus.BUSY.value]:
                     status = f"{status} (stale)"
                     status_color = "red"
                 else:
                     status_color = {
-                        "idle": "green",
-                        "busy": "yellow",
-                        "offline": "red",
-                        "killed": "red bold",
+                        WorkerStatus.IDLE.value: "green",
+                        WorkerStatus.BUSY.value: "yellow",
+                        WorkerStatus.OFFLINE.value: "red",
+                        WorkerStatus.KILLED.value: "red bold",
                     }.get(worker["status"], "white")
 
             except Exception:
@@ -212,7 +212,7 @@ class LaufbandStatusDisplay:
                 worker["worker_id"],
                 Text(status, style=status_color),
                 worker["last_heartbeat"],
-                str(worker["running_tasks"]),
+                str(worker["processed_tasks"]),
                 worker["hostname"],
                 str(worker["pid"]),
                 worker["labels"],

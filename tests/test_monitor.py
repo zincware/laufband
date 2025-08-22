@@ -54,3 +54,6 @@ def test_monitor(graphband_state):
     workflow = m.get_workflow()
     assert workflow.id == "main"
     assert workflow.total_tasks is None
+
+    tasks_by_worker = m.get_tasks(worker=worker[0])
+    assert len(tasks_by_worker) == 6

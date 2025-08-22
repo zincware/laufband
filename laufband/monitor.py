@@ -19,10 +19,18 @@ class Monitor:
     def get_workers(self) -> list[WorkerEntry]:
         return self.session.query(WorkerEntry).all()
 
-    def get_tasks(self, state: TaskStatusEnum | None = None) -> list[TaskEntry]:
+    def get_tasks(self, state: TaskStatusEnum | None = None, worker: WorkerEntry | None = None) -> list[TaskEntry]:
         tasks = self.session.query(TaskEntry).all()
         if state is not None:
             tasks = [task for task in tasks if task.current_status.status == state]
+        if worker is not None:
+            # check if worker in any status for all tasks is the current worker
+            new_tasks = []
+            for task in tasks:
+                for state in task.statuses:
+                    if state.worker == worker:
+                        new_tasks.append(task)
+            tasks = list(set(new_tasks))
         return tasks
 
     def get_workflow(self) -> WorkflowEntry:
