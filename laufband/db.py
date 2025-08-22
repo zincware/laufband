@@ -140,14 +140,18 @@ class TaskEntry(Base):
     def failed_retries(self) -> int:
         result = sum(1 for x in self.statuses if x.status == TaskStatusEnum.FAILED)
         if result == 0:
-            return -1  # there is no "0" failed retries, just no failed retries and we indicate that with -1
+            # there is no "0" failed retries, just no failed retries and we
+            # indicate that with -1
+            return -1
         return result
 
     @property
     def killed_retries(self) -> int:
         result = sum(1 for x in self.statuses if x.status == TaskStatusEnum.KILLED)
         if result == 0:
-            return -1  # there is no "0" killed retries, just no killed retries and we indicate that with -1
+            # there is no "0" killed retries, just no killed retries and we
+            # indicate that with -1
+            return -1
         return result
 
     @property
@@ -177,7 +181,7 @@ class TaskEntry(Base):
                 running_workers.add(status.worker_id)
             elif status.status == TaskStatusEnum.COMPLETED:
                 if status.worker_id in running_workers:
-                    # a worker has succesfully completed and
+                    # a worker has successfully completed and
                     #  no new workers should be picked up
                     return False
             else:

@@ -113,7 +113,7 @@ def test_graphband_sequential_close_and_resume(tmp_path):
         items.append(item)
 
     assert len(items) == 10  # 6 to 9 inclusive
-    assert len(set(x.id for x in items)) == 10
+    assert len({x.id for x in items}) == 10
 
     with Session(pbar._engine) as session:
         tasks = session.query(TaskEntry).all()
@@ -297,7 +297,7 @@ def test_kill_sequential_task_worker(tmp_path):
     )
     proc.start()
     time.sleep(1)  # let the worker start and process about 4 tasks
-    # kill the worker immediatly with no time to properly exit
+    # kill the worker immediately with no time to properly exit
     proc.kill()
     proc.join()
     # assert the worker is still registered as "online"

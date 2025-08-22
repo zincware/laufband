@@ -25,7 +25,7 @@ def heartbeat(lock: Lock, db: str, identifier: str, stop_event: threading.Event)
             worker.last_heartbeat = datetime.now()
             heartbeat_interval = worker.heartbeat_interval
             session.commit()
-            # check expired hearbeats
+            # check expired heartbeats
             for worker in (
                 session.query(WorkerEntry)
                 .filter(WorkerEntry.status.in_([WorkerStatus.BUSY, WorkerStatus.IDLE]))

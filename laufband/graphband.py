@@ -21,21 +21,10 @@ from laufband.db import (
     WorkerStatus,
     WorkflowEntry,
 )
-from laufband.hearbeat import heartbeat
+from laufband.heartbeat import heartbeat
 from laufband.task import Task, TaskTypeVar
 
 log = logging.getLogger(__name__)
-
-# Issue, if we have a generator like ase.io.iread we don't want to fully iterate it at each __next__
-# If we have a dynamik graph, we need to iterate it at each __next__
-# if we have different labels, we need to exhaust either the full graph or up to the next N entries to check for jobs.
-# if we want to be able to pass a generator to laufband, we don't have a generator factory.
-# possibly the best solution would be, iterate the generator and define how many iterations in the future should be checked for labels.
-#   If set to "all" then it will iterate the entire graph and check / cache the jobs.
-# Given we define a worker timeout, until timeout it should recheck all items previously unavailable, otherwise just end.
-# Need to define a recheck-interval.
-# dynamik graph building is realized by restarting the process.
-# for dynamik graph building, if an entry allready exists but has received a new dependency, for now raise an error.
 
 
 class MultiLock:
@@ -169,7 +158,8 @@ class Graphband(t.Generic[TaskTypeVar]):
         self._max_failed_retries = max_failed_retries
         self._max_killed_retries = max_killed_retries
         self._db = db
-        self._failed_job_cache = {}  # here we keep track of failed job data to be retried later.
+        # here we keep track of failed job data to be retried later
+        self._failed_job_cache = {}
         self._iterator = None
         self._heartbeat_timeout = heartbeat_timeout
         self._heartbeat_interval = heartbeat_interval
@@ -291,7 +281,8 @@ class Graphband(t.Generic[TaskTypeVar]):
         for task in self._iterator:
             if not task.requirements.issubset(self.labels):
                 log.debug(
-                    f"Task {task.id} requires labels {task.requirements}, skipping worker {self.identifier} with labels: {self.labels}"
+                    f"Task {task.id} requires labels {task.requirements}, "
+                    f"skipping worker {self.identifier} with labels: {self.labels}"
                 )
                 continue
             with self.lock:
@@ -323,7 +314,8 @@ class Graphband(t.Generic[TaskTypeVar]):
                             break
                         elif not dep_entry.completed:
                             log.debug(
-                                f"Dependency {dep} not completed, skipping task {task.id}."
+                                f"Dependency {dep} not completed, "
+                                f"skipping task {task.id}."
                             )
                             skip_task = True
                             break
