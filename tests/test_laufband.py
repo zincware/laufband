@@ -28,6 +28,7 @@ def test_laufband_length_with_generator_raises_error(tmp_path):
     assert len(results) == 10
     assert set(results) == set(range(10))
 
+
 def test_laufband_iter_none(tmp_path):
     data = (None for _ in range(10))
     laufband = Laufband(data, db=f"sqlite:///{tmp_path}/laufband.sqlite")
