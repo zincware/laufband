@@ -787,6 +787,7 @@ dependencies = [
     { name = "rich" },
     { name = "sqlalchemy" },
     { name = "tqdm" },
+    { name = "typer" },
 ]
 
 [package.dev-dependencies]
@@ -812,6 +813,7 @@ requires-dist = [
     { name = "rich", specifier = ">=14.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.43" },
     { name = "tqdm", specifier = ">=4.67.1" },
+    { name = "typer", specifier = ">=0.15.2" },
 ]
 
 [package.metadata.requires-dev]
