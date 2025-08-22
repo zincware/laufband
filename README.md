@@ -148,7 +148,7 @@ Laufband supports dependency-aware tasks through `laufband.Graphband`.
 To utilize this functionality, you need to write an iterator taking care of the correct order of tasks.
 
 > [!NOTE]
-> The `laufband.Laufband` uses a _flat_ directed graph without any edges as input to `Laufband.Graphband`.
+> The `laufband.Laufband` uses directed graph without any edges as input to `laufband.Graphband`.
 
 ```py
 import networkx as nx
@@ -184,4 +184,42 @@ worker = Graphband(graph_task())
 
 for task in worker:
     print(task.id, task.data)
+```
+
+# Labels, Requirements and Multiple Workers per Task
+
+You can assign requirements to your tasks and labels to workers to control their execution.
+
+```py
+from laufband import Task, Graphband
+
+def iterator():
+    yield Task(id="task1")
+    yield Task(id="task2", requirements={"gpu"})
+
+w1 = Graphband(iterator(), identifier="w1")
+w2 = Graphband(iterator(), identifier="w2", labels={"gpu"})
+
+print([x.id for x in w1])
+# [task1]
+print([x.id for x in w2])
+# [task2]
+```
+
+Sometimes, a task itself supports internal parallel execution, e.g. through nested use of `laufband` In such a case you can assign multiple workers to one task.
+
+> [!NOTE]
+> Keep in mind that `laufband` does not actually schedule the execution. The available workers per task depends on the number of workers being spawned.
+
+```py
+from laufband import Task, Graphband
+
+def iterator():
+    yield Task(id="task1", max_parallel_workers=2)
+    # a maximum of 2 workers will be assign to this job until both successfully finish .
+
+worker = Graphband(iterator())
+
+for item in worker:
+    # code that can be executed multiple times, e.g. via laufband itself.
 ```
