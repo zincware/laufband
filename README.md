@@ -140,3 +140,48 @@ You can use the `laufband watch` to follow the progress across all active worker
 
 ![Laufband CLI](https://github.com/user-attachments/assets/e3c8c345-994c-4b97-b3a3-7a14e460240b#gh-dark-mode-only "Laufband CLI")
 ![Laufband CLI](https://github.com/user-attachments/assets/1c07c641-add7-4c48-89f8-8da67a8061d1#gh-light-mode-only "Laufband CLI")
+
+
+# Graphband
+
+Laufband supports dependency-aware tasks through `laufband.Graphband`.
+To utilize this functionality, you need to write an iterator taking care of the correct order of tasks.
+
+> [!NOTE]
+> The `laufband.Laufband` uses a _flat_ directed graph without any edges as input to `Laufband.Graphband`.
+
+```py
+import networkx as nx
+from laufband import Task
+
+def graph_tasks():
+    digraph = nx.DiGraph()
+    edges = [
+        ("a", "b"),
+        ("a", "c"),
+        ("b", "d"),
+        ("b", "e"),
+        ("c", "f"),
+        ("c", "g"),
+    ]
+    digraph.add_edges_from(edges)
+    for node in nx.topological_sort(digraph):
+        yield Task(
+            id=node,  # unique string representation of the task
+            data=node, # optional data associated with the task
+            dependencies=digraph.predecessors(node), # dependencies of the task
+        )
+```
+Given this generator, you can iterate the graph in parallel using `laufband.Graphband`.
+
+> [!WARNING]
+> Once `laufband.Graphband` has executed a task, it will not re-execute it, even if a dependency is added later on.
+
+```py
+from laufband import Graphband
+
+worker = Graphband(graph_task())
+
+for task in worker:
+    print(task.id, task.data)
+```

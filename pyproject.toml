@@ -12,7 +12,6 @@ dependencies = [
     "tqdm>=4.67.1",
     "flufl-lock>=8.1.0",
     "rich>=14.0.0",
-    "networkx>=3.4.2",
     "sqlalchemy>=2.0.43",
     "typer>=0.15.2",
 ]
@@ -26,6 +25,7 @@ dev = [
     "ipykernel>=6.30.1",
     "mypy>=1.17.1",
     "zntrack>=0.8.9",
+    "networkx>=3.4.2",
 ]
 
 atomic = [
