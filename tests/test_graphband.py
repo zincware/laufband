@@ -1,3 +1,6 @@
+import multiprocessing
+import time
+
 import pytest
 from flufl.lock import Lock
 from sqlalchemy.orm import Session
@@ -139,15 +142,14 @@ def test_graphband_sequential_break_and_retry(tmp_path):
     assert len(items) == 5
     assert "task_5" in pbar._failed_job_cache
     items.extend(list(pbar))
-    assert (
-        len(pbar._failed_job_cache) == 0
-    )  # failed job has been cleaned up after iteration
-    assert (
-        len([x.id for x in items]) == 10
-    )  # the failed task has been retried and added.
+    assert len(pbar._failed_job_cache) == 0
+    # failed job has been cleaned up after iteration
+    assert len([x.id for x in items]) == 10
+    # the failed task has been retried and added.
 
     with Session(pbar._engine) as session:
         task_5 = session.query(TaskEntry).filter(TaskEntry.id == "task_5").first()
+        assert task_5 is not None
         assert task_5.statuses[0].status == TaskStatusEnum.RUNNING
         assert task_5.statuses[1].status == TaskStatusEnum.FAILED
         assert task_5.statuses[2].status == TaskStatusEnum.RUNNING
@@ -166,3 +168,40 @@ def test_duplicate_worker(tmp_path):
             db=f"sqlite:///{tmp_path}/graphband.sqlite",
             lock=Lock(f"{tmp_path}/graphband.lock"),
         )
+
+
+def sequential_task_worker(lock_path: str, db: str, file: str, timeout: float):
+    lock = Lock(lock_path)
+    pbar = Graphband(sequential_task(), lock=lock, db=db)
+    for task in pbar:
+        with pbar.lock:
+            with open(file, "a") as f:
+                f.write(f"{task.id} - {pbar.identifier} \n")
+        time.sleep(timeout)
+
+
+@pytest.mark.human_reviewed
+@pytest.mark.parametrize("num_processes", [1, 2, 4])
+def test_multiprocessing_pool(tmp_path, num_processes):
+    """Test laufband using a multiprocessing pool."""
+    lock_path = f"{tmp_path}/graphband.lock"
+    db = f"sqlite:///{tmp_path}/graphband.sqlite"
+    file = f"{tmp_path}/output.txt"
+
+    with multiprocessing.Pool(processes=num_processes) as pool:
+        # increase the timeout for more processes
+        pool.starmap(
+            sequential_task_worker,
+            [(lock_path, db, file, num_processes * 0.1)] * num_processes,
+        )
+
+    worker = []
+    tasks = []
+    with open(file, "r") as f:
+        for line in f:
+            task_id, worker_id = line.strip().split(" - ")
+            worker.append(worker_id)
+            tasks.append(task_id)
+
+    assert len(set(worker)) == num_processes
+    assert len(set(tasks)) == 10

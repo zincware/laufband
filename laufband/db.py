@@ -94,17 +94,13 @@ class TaskEntry(Base):
     max_parallel_workers: Mapped[int] = mapped_column(Integer, default=1)
 
     @property
-    def current_status(self) -> TaskStatusEntry | None:
-        return self.statuses[-1] if self.statuses else None
+    def current_status(self) -> TaskStatusEntry:
+        return self.statuses[-1]
 
     @property
     def failed_retries(self) -> int:
-        return sum(
-            1 for status in self.statuses if status.status == TaskStatusEnum.FAILED
-        )
+        return sum(1 for x in self.statuses if x.status == TaskStatusEnum.FAILED)
 
     @property
     def killed_retries(self) -> int:
-        return sum(
-            1 for status in self.statuses if status.status == TaskStatusEnum.KILLED
-        )
+        return sum(1 for x in self.statuses if x.status == TaskStatusEnum.KILLED)
