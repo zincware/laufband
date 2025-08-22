@@ -48,3 +48,6 @@ def test_monitor(graphband_state):
     assert len(failed_tasks) == 1
     running_tasks = m.get_tasks(TaskStatusEnum.RUNNING)
     assert len(running_tasks) == 0
+    workflow = m.get_workflow()
+    assert workflow.id == "main"
+    assert workflow.total_tasks is None

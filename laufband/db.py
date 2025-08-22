@@ -43,6 +43,9 @@ class WorkflowEntry(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     total_tasks: Mapped[int] = mapped_column(Integer, nullable=True)
 
+    workers: Mapped[List["WorkerEntry"]] = relationship(back_populates="workflow")
+    tasks: Mapped[List["TaskEntry"]] = relationship(back_populates="workflow")
+
 # --- Worker ---
 class WorkerEntry(Base):
     __tablename__ = "workers"
@@ -59,6 +62,10 @@ class WorkerEntry(Base):
     hostname: Mapped[str | None] = mapped_column(String, nullable=True)
     pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    workflow_id: Mapped[str] = mapped_column(ForeignKey("workflows.id"))
+
+    workflow: Mapped["WorkflowEntry"] = relationship(back_populates="workers")
 
     # One worker can appear in many TaskStatusEntries
     task_statuses: Mapped[List["TaskStatusEntry"]] = relationship(
@@ -110,6 +117,10 @@ class TaskEntry(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     requirements: Mapped[List[str]] = mapped_column(JSON, default=list)
+
+    workflow_id: Mapped[str] = mapped_column(ForeignKey("workflows.id"))
+
+    workflow: Mapped["WorkflowEntry"] = relationship(back_populates="tasks")
 
     statuses: Mapped[List[TaskStatusEntry]] = relationship(
         back_populates="task",

@@ -3,7 +3,7 @@ from flufl.lock import Lock
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from laufband.db import WorkerEntry, TaskEntry, TaskStatusEnum
+from laufband.db import WorkerEntry, TaskEntry, TaskStatusEnum, WorkflowEntry
 
 @dataclasses.dataclass
 class Monitor:
@@ -22,3 +22,9 @@ class Monitor:
         if state is not None:
             tasks = [task for task in tasks if task.current_status.status == state]
         return tasks
+
+    def get_workflow(self) -> WorkflowEntry:
+        workflow = self.session.query(WorkflowEntry).filter(WorkflowEntry.id == "main").first()
+        if workflow is None:
+            raise ValueError("Workflow 'main' not found.")
+        return workflow

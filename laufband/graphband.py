@@ -20,6 +20,7 @@ from laufband.db import (
     TaskStatusEnum,
     WorkerEntry,
     WorkerStatus,
+    WorkflowEntry,
 )
 from laufband.hearbeat import heartbeat
 from laufband.task import Task, TaskTypeVar
@@ -201,6 +202,14 @@ class Graphband(t.Generic[TaskTypeVar]):
                 # check if a worker with the given identifier already exists
                 if session.get(WorkerEntry, self._identifier) is not None:
                     raise ValueError("Worker with this identifier already exists")
+                workflow = session.query(WorkflowEntry).filter(WorkflowEntry.id == "main").first()
+                if workflow is None:
+                    try:
+                        size = len(self.graph_fn)
+                    except TypeError:
+                        size = None
+                    workflow = WorkflowEntry(id="main", total_tasks=size)
+                    session.add(workflow)
                 worker_entry = WorkerEntry(
                     id=self._identifier,
                     status=WorkerStatus.IDLE,
@@ -209,6 +218,7 @@ class Graphband(t.Generic[TaskTypeVar]):
                     heartbeat_interval=self._heartbeat_interval,
                     heartbeat_timeout=self._heartbeat_timeout,
                     labels=list(self.labels),
+                    workflow=workflow,
                 )
                 session.add(worker_entry)
                 session.commit()
@@ -312,12 +322,17 @@ class Graphband(t.Generic[TaskTypeVar]):
                             continue
                     else:
                         log.debug(f"Registering task {task.id} in database.")
+                        workflow = session.query(WorkflowEntry).filter(WorkflowEntry.id == "main").first()
+                        if workflow is None:
+                            raise ValueError("Workflow 'main' not found.")
                         task_entry = TaskEntry(
                             id=task.id,
                             # dependencies=task.dependencies,
                             requirements=list(task.requirements),
                             max_parallel_workers=task.max_parallel_workers,
+                            workflow=workflow,
                         )
+                        session.add(task_entry)
                     worker = session.get(WorkerEntry, self._identifier)
                     if worker is None:
                         raise ValueError(

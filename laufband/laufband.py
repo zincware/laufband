@@ -7,7 +7,7 @@ from laufband.task import Task, TaskTypeVar
 
 class SequentialGraphIterator(t.Generic[TaskTypeVar]):
     def __init__(self, data: Iterable[TaskTypeVar]):
-        self.data = list(data)
+        self.data = data
 
     def __len__(self):
         return len(self.data)
