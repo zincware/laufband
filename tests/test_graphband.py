@@ -22,6 +22,13 @@ def sequential_multi_worker_task():
         yield Task(id=f"task_{i}", data={"value": i}, max_parallel_workers=2)
 
 
+def sequential_task_with_labels():
+    for i in range(5):
+        yield Task(id=f"task_{i}", data={"value": i}, requirements={"cpu"})
+    for i in range(5, 10):
+        yield Task(id=f"task_{i}", data={"value": i}, requirements={"gpu"})
+
+
 @pytest.mark.human_reviewed
 def test_graphband_sequential_success(tmp_path):
     pbar = Graphband(
@@ -207,7 +214,7 @@ def test_multiprocessing_sequential_task(tmp_path, num_processes):
         # increase the timeout for more processes
         pool.starmap(
             task_worker,
-            [(sequential_task, lock_path, db, file, num_processes * 0.1)]
+            [(sequential_task, lock_path, db, file, num_processes * 0.2)]
             * num_processes,
         )
 
@@ -325,3 +332,46 @@ def test_kill_sequential_task_worker(tmp_path):
         tasks = session.query(TaskEntry).all()
         assert tasks[0].current_status.status == TaskStatusEnum.COMPLETED
         assert tasks[0].current_status.worker == w3
+
+
+def test_sequential_task_with_labels(tmp_path):
+    cpu_worker = Graphband(
+        sequential_task_with_labels(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        labels={"cpu"},
+        identifier="cpu_worker",
+    )
+    gpu_worker = Graphband(
+        sequential_task_with_labels(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        labels={"gpu"},
+        identifier="gpu_worker",
+    )
+    assert len(list(cpu_worker)) == 5
+    assert len(list(gpu_worker)) == 5
+
+    with Session(cpu_worker._engine) as session:
+        cpu_tasks = (
+            session.query(TaskEntry)
+            .filter(TaskEntry.requirements.contains("cpu"))
+            .all()
+        )
+        gpu_tasks = (
+            session.query(TaskEntry)
+            .filter(TaskEntry.requirements.contains("gpu"))
+            .all()
+        )
+        assert len(cpu_tasks) == 5
+        assert len(gpu_tasks) == 5
+
+
+def test_sequential_task_with_labels_multi_label_worker(tmp_path):
+    worker = Graphband(
+        sequential_task_with_labels(),
+        db=f"sqlite:///{tmp_path}/graphband.sqlite",
+        lock=Lock(f"{tmp_path}/graphband.lock"),
+        labels={"cpu", "gpu"},
+    )
+    assert len(list(worker)) == 10

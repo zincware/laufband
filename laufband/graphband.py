@@ -137,6 +137,7 @@ class Graphband(t.Generic[_T]):
         max_failed_retries: int = int(os.getenv("LAUFBAND_MAX_FAILED_RETRIES", 0)),
         disabled: bool = bool(int(os.getenv("LAUFBAND_DISABLED", "0"))),
         tqdm_kwargs: dict[str, t.Any] | None = None,
+        labels: set[str] | None = None,
     ):
         """Graphband generator for parallel processing of DAGs using file-based locking.
 
@@ -189,6 +190,7 @@ class Graphband(t.Generic[_T]):
         self.iterator = None
         self._heartbeat_timeout = heartbeat_timeout
         self._heartbeat_interval = heartbeat_interval
+        self._labels = frozenset(labels or [])
 
         if not self.disabled:
             # we need to lock between threads and workers,
@@ -223,6 +225,7 @@ class Graphband(t.Generic[_T]):
                     pid=os.getpid(),
                     heartbeat_interval=self._heartbeat_interval,
                     heartbeat_timeout=self._heartbeat_timeout,
+                    labels=list(self.labels),
                 )
                 session.add(worker_entry)
                 session.commit()
@@ -250,6 +253,11 @@ class Graphband(t.Generic[_T]):
         """Unique identifier of this worker"""
         return self._identifier
 
+    @property
+    def labels(self) -> frozenset[str]:
+        """Frozenset of labels associated with this worker"""
+        return self._labels
+
     def __iter__(self) -> Generator[Task, None, None]:
         """The generator that handles the iteration logic."""
 
@@ -272,6 +280,11 @@ class Graphband(t.Generic[_T]):
             return
 
         for task in self.iterator:
+            if not task.requirements.issubset(self.labels):
+                log.debug(
+                    f"Task {task.id} requires labels {task.requirements}, skipping worker {self.identifier} with labels: {self.labels}"
+                )
+                continue
             with self.lock:
                 with Session(self._engine) as session:
                     task_entry = session.get(TaskEntry, task.id)
