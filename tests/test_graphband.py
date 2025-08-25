@@ -563,7 +563,7 @@ def test_has_more_jobs(tmp_path):
         max_failed_retries=2,
         identifier="retry-worker-2",
     )
-    assert w3.has_more_jobs is False  # all jobs are no completed succesfully
+    assert w3.has_more_jobs is False  # all jobs are no completed successfully
 
 
 def blocked_dependency_graph_task():
@@ -661,7 +661,8 @@ def test_has_more_jobs_with_blocked_dependencies(tmp_path):
 
 # TODO: need to check that this LLM Agent generated test makes sense!
 def test_has_more_jobs_with_killed_workers(tmp_path):
-    """Test has_more_jobs behavior when workers are killed and tasks exceed retry limits."""
+    """Test has_more_jobs behavior when workers are killed
+    and tasks exceed retry limits."""
     # Test case where killed tasks cannot be retried (max_killed_retries=0)
     lock_path = f"{tmp_path}/graphband.lock"
     db = f"sqlite:///{tmp_path}/graphband.sqlite"
