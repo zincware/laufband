@@ -91,7 +91,7 @@ def test_graphband_sequential_success(tmp_path):
     with Session(pbar._engine) as session:
         workers = session.query(WorkerEntry).all()
         assert len(workers) == 1
-        assert workers[0].status == WorkerStatus.OFFLINE
+        assert workers[0].status == WorkerStatus.IDLE
         tasks = session.query(TaskEntry).all()
         assert len(tasks) == 10
         for id, task in enumerate(tasks):
@@ -101,6 +101,15 @@ def test_graphband_sequential_success(tmp_path):
 
     # if we no iterate again, we yield nothing
     assert list(pbar) == []
+    
+    # Test that worker goes offline when garbage collected
+    engine = pbar._engine
+    del pbar
+    
+    with Session(engine) as session:
+        workers = session.query(WorkerEntry).all()
+        assert len(workers) == 1
+        assert workers[0].status == WorkerStatus.OFFLINE
 
     pbar = Graphband(
         sequential_task(),
