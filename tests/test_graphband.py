@@ -101,11 +101,11 @@ def test_graphband_sequential_success(tmp_path):
 
     # if we no iterate again, we yield nothing
     assert list(pbar) == []
-    
+
     # Test that worker goes offline when garbage collected
     engine = pbar._engine
     del pbar
-    
+
     with Session(engine) as session:
         workers = session.query(WorkerEntry).all()
         assert len(workers) == 1
