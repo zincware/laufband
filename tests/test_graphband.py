@@ -592,7 +592,7 @@ def blocked_dependency_graph_task():
 def test_has_more_jobs_with_blocked_dependencies(tmp_path):
     """Test has_more_jobs when dependencies are blocked by label mismatches.
 
-    This test verifies the TODO scenario where:
+    This test verifies the scenario where:
     - a --> b --> c dependency chain
     - b needs a different label than a, c
     - has_more_jobs for the a/c worker should be true until c is completed
@@ -659,7 +659,6 @@ def test_has_more_jobs_with_blocked_dependencies(tmp_path):
     assert special_worker.has_more_jobs is False
 
 
-# TODO: need to check that this LLM Agent generated test makes sense!
 def test_has_more_jobs_with_killed_workers(tmp_path):
     """Test has_more_jobs behavior when workers are killed
     and tasks exceed retry limits."""
@@ -673,101 +672,64 @@ def test_has_more_jobs_with_killed_workers(tmp_path):
         target=task_worker,
         args=(sequential_task, lock_path, db, file, 3),
         kwargs={
-            "heartbeat_timeout": 2,
-            "heartbeat_interval": 1,
+            "heartbeat_timeout": 1,
+            "heartbeat_interval": 0.5,
             "max_killed_retries": 0,  # No retries allowed for killed tasks
             "identifier": "killed-worker",
         },
     )
     proc.start()
-    time.sleep(0.5)  # Let the worker start one task
+    time.sleep(2)  # Let the worker start one task
     proc.kill()
     proc.join()
 
-    # Wait for heartbeat to expire and task to be marked as killed
-    time.sleep(3)
-
-    # Create a new worker to verify has_more_jobs behavior
-    check_worker = Graphband(
+    time.sleep(2)
+    # need to start another worker to mark the job as killed in the db
+    _ = Graphband(
         sequential_task(),
         db=db,
         lock=Lock(lock_path),
         heartbeat_timeout=2,
         heartbeat_interval=1,
-        max_killed_retries=0,  # Same retry limit
-        identifier="check-worker",
+        identifier="update-worker",
     )
+    time.sleep(2)
 
-    # Should have more jobs initially (remaining tasks that weren't killed)
-    assert check_worker.has_more_jobs is True
-
-    # Process remaining tasks (killed task should not be retried)
-    items = list(check_worker)
-    assert len(items) == 9  # Should process 9 tasks (excluding the killed one)
-
-    # Should have no more jobs after processing all retryable tasks
-    assert check_worker.has_more_jobs is False
 
     # Verify the killed task is permanently blocked
     engine = create_engine(db)
     with Session(engine) as session:
         tasks = session.query(TaskEntry).all()
-        killed_task = next(
-            (t for t in tasks if t.current_status.status == TaskStatusEnum.KILLED), None
-        )
-        assert killed_task is not None
-        assert killed_task.killed_retries > 0
-
         # Verify we have exactly one killed task and 9 completed tasks
         killed_tasks = [
             t for t in tasks if t.current_status.status == TaskStatusEnum.KILLED
         ]
-        completed_tasks = [
-            t for t in tasks if t.current_status.status == TaskStatusEnum.COMPLETED
-        ]
         assert len(killed_tasks) == 1
-        assert len(completed_tasks) == 9
 
-    # Test case where killed tasks CAN be retried (max_killed_retries=2)
-    lock_path2 = f"{tmp_path}/graphband2.lock"
-    db2 = f"sqlite:///{tmp_path}/graphband2.sqlite"
-    file2 = f"{tmp_path}/output2.txt"
-
-    proc2 = multiprocessing.Process(
-        target=task_worker,
-        args=(sequential_task, lock_path2, db2, file2, 3),
-        kwargs={
-            "heartbeat_timeout": 2,
-            "heartbeat_interval": 1,
-            "max_killed_retries": 2,  # Allow retries for killed tasks
-            "identifier": "killed-worker-2",
-        },
-    )
-    proc2.start()
-    time.sleep(0.5)  # Let it start one task
-    proc2.kill()
-    proc2.join()
-
-    # Wait for heartbeat to expire
-    time.sleep(3)
-
-    # Create worker that can retry killed tasks
-    retry_worker = Graphband(
+    no_retries_worker = Graphband(
         sequential_task(),
-        db=db2,
-        lock=Lock(lock_path2),
+        db=db,
+        lock=Lock(lock_path),
+        heartbeat_timeout=2,
+        heartbeat_interval=1,
+        max_killed_retries=0,  # No retries allowed
+        identifier="no-retries-worker",
+    )
+
+    retries_worker = Graphband(
+        sequential_task(),
+        db=db,
+        lock=Lock(lock_path),
         heartbeat_timeout=2,
         heartbeat_interval=1,
         max_killed_retries=2,  # Allow retries
-        identifier="retry-worker",
+        identifier="retries-worker",
     )
 
-    # Should have more jobs (including retryable killed task)
-    assert retry_worker.has_more_jobs is True
-
-    # Process all tasks including retry of killed task
-    retry_items = list(retry_worker)
-    assert len(retry_items) == 10  # Should process all 10 tasks
-
-    # Should have no more jobs after completion
-    assert retry_worker.has_more_jobs is False
+    assert no_retries_worker.has_more_jobs is True
+    assert retries_worker.has_more_jobs is True
+    assert len(list(no_retries_worker)) == 9
+    assert no_retries_worker.has_more_jobs is False
+    assert retries_worker.has_more_jobs is True
+    assert len(list(retries_worker)) == 1
+    assert retries_worker.has_more_jobs is False
