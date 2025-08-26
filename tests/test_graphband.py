@@ -763,8 +763,7 @@ def test_resume_worker(tmp_path):
         if item.id == "task_5":
             break
     assert length == 6
-    
-    
+
     with Session(engine) as session:
         worker_entry = session.get(WorkerEntry, "worker")
         assert worker_entry is not None
@@ -776,9 +775,9 @@ def test_resume_worker(tmp_path):
             assert worker_entry is not None
             assert worker_entry.status == WorkerStatus.BUSY
         length += 1
-    
+
     assert length == 10
-    
+
     with Session(engine) as session:
         worker_entry = session.get(WorkerEntry, "worker")
         assert worker_entry is not None
