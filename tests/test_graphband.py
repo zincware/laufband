@@ -695,7 +695,6 @@ def test_has_more_jobs_with_killed_workers(tmp_path):
     )
     time.sleep(2)
 
-
     # Verify the killed task is permanently blocked
     engine = create_engine(db)
     with Session(engine) as session:
