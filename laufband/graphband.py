@@ -218,8 +218,10 @@ class Graphband(t.Generic[TaskTypeVar]):
                 session.commit()
 
     def __del__(self):
-        if hasattr(self, "_thread_event"):
+        if hasattr(self, "_thread_event") and hasattr(self, "_heartbeat_thread"):
             self._thread_event.set()
+            if self._heartbeat_thread.is_alive():
+                self._heartbeat_thread.join()
 
     def close(self):
         """Exit out of the graphband generator.
@@ -536,5 +538,3 @@ class Graphband(t.Generic[TaskTypeVar]):
                 break
         if completed_naturally:
             self._iterator_completed = True
-        self._thread_event.set()
-        self._heartbeat_thread.join()

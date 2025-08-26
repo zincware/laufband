@@ -732,3 +732,79 @@ def test_has_more_jobs_with_killed_workers(tmp_path):
     assert retries_worker.has_more_jobs is True
     assert len(list(retries_worker)) == 1
     assert retries_worker.has_more_jobs is False
+
+
+def test_resume_worker(tmp_path):
+    lock_path = f"{tmp_path}/graphband.lock"
+    db_path = f"sqlite:///{tmp_path}/graphband.sqlite"
+
+    worker = Graphband(
+        sequential_task(),
+        db=db_path,
+        lock=Lock(lock_path),
+        heartbeat_timeout=2,
+        heartbeat_interval=1,
+        identifier="worker",
+    )
+    engine = create_engine(worker.db)
+    length = 0
+
+    with Session(engine) as session:
+        worker_entry = session.get(WorkerEntry, "worker")
+        assert worker_entry is not None
+        assert worker_entry.status == WorkerStatus.IDLE
+
+    for item in worker:
+        with Session(engine) as session:
+            worker_entry = session.get(WorkerEntry, "worker")
+            assert worker_entry is not None
+            assert worker_entry.status == WorkerStatus.BUSY
+        length += 1
+        if item.id == "task_5":
+            break
+    assert length == 6
+    
+    
+    with Session(engine) as session:
+        worker_entry = session.get(WorkerEntry, "worker")
+        assert worker_entry is not None
+        assert worker_entry.status == WorkerStatus.IDLE
+
+    for item in worker:
+        with Session(engine) as session:
+            worker_entry = session.get(WorkerEntry, "worker")
+            assert worker_entry is not None
+            assert worker_entry.status == WorkerStatus.BUSY
+        length += 1
+    
+    assert length == 10
+    
+    with Session(engine) as session:
+        worker_entry = session.get(WorkerEntry, "worker")
+        assert worker_entry is not None
+        assert worker_entry.status == WorkerStatus.IDLE
+
+    del worker
+
+    with Session(engine) as session:
+        worker_entry = session.get(WorkerEntry, "worker")
+        assert worker_entry is not None
+        assert worker_entry.status == WorkerStatus.OFFLINE
+
+    proc = multiprocessing.Process(
+        target=task_worker,
+        args=(sequential_task, lock_path, db_path, tmp_path / "test.txt", 0.1),
+        kwargs={
+            "heartbeat_timeout": 1,
+            "heartbeat_interval": 0.5,
+            "max_killed_retries": 0,  # No retries allowed for killed tasks
+            "identifier": "killed-worker",
+        },
+    )
+    proc.start()
+    proc.join(timeout=5)
+
+    with Session(engine) as session:
+        worker_entry = session.get(WorkerEntry, "killed-worker")
+        assert worker_entry is not None
+        assert worker_entry.status == WorkerStatus.OFFLINE
