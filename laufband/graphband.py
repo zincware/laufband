@@ -92,8 +92,8 @@ class SizedGraphTraversalProtocol(GraphTraversalProtocol[TaskTypeVar]):
 
 
 def _identifier_default_fn() -> str:
-    if os.getenv("LAUFBAND_IDENTIFIER"):
-        return str(os.getenv("LAUFBAND_IDENTIFIER"))
+    if ident := os.getenv("LAUFBAND_IDENTIFIER"):
+        return str(ident)
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
