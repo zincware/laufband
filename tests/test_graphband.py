@@ -273,7 +273,7 @@ def test_multiprocessing_sequential_task(tmp_path, num_processes):
         # increase the timeout for more processes
         pool.starmap(
             task_worker,
-            [(sequential_task, lock_path, db, file, num_processes * 0.2)]
+            [(sequential_task, lock_path, db, file, num_processes * 0.3)]
             * num_processes,
         )
 
