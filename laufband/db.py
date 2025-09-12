@@ -83,6 +83,7 @@ class WorkerEntry(Base):
     # One worker can appear in many TaskStatusEntries
     task_statuses: Mapped[List["TaskStatusEntry"]] = relationship(
         back_populates="worker",
+        order_by=lambda: TaskStatusEntry.timestamp,
     )
 
     @property
@@ -94,15 +95,10 @@ class WorkerEntry(Base):
 
     @property
     def running_tasks(self) -> set["TaskEntry"]:
-        """Get all running tasks for this worker."""
-        running_tasks = set()
-        for status in self.task_statuses:
-            if status.status == TaskStatusEnum.RUNNING:
-                running_tasks.add(status.task)
-            else:
-                # remove if running has been outdated.
-                running_tasks.discard(status.task)
-        return running_tasks
+        latest: dict["TaskEntry", TaskStatusEnum] = {}
+        for s in self.task_statuses:
+            latest[s.task] = s.status
+        return {t for t, st in latest.items() if st == TaskStatusEnum.RUNNING}
 
 
 # --- TaskStatusEntry ---
