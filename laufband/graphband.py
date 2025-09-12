@@ -91,6 +91,12 @@ class SizedGraphTraversalProtocol(GraphTraversalProtocol[TaskTypeVar]):
     def __len__(self) -> int: ...
 
 
+def _identifier_default() -> str:
+    if os.getenv("LAUFBAND_IDENTIFIER"):
+        return str(os.getenv("LAUFBAND_IDENTIFIER"))
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
 class Graphband(t.Generic[TaskTypeVar]):
     def __init__(
         self,
@@ -99,8 +105,7 @@ class Graphband(t.Generic[TaskTypeVar]):
         *,
         lock: Lock = Lock("graphband.lock"),
         db: str = "sqlite:///graphband.sqlite",
-        identifier: str | t.Callable = os.getenv("LAUFBAND_IDENTIFIER")
-        or (lambda: f"{socket.gethostname()}:{os.getpid()}"),
+        identifier: str | t.Callable = _identifier_default(),
         failure_policy: t.Literal["continue", "stop"] = os.getenv(
             "LAUFBAND_FAILURE_POLICY", "continue"
         ),
@@ -138,8 +143,8 @@ class Graphband(t.Generic[TaskTypeVar]):
             Defaults to 60 seconds or the value of the environment variable
             ``LAUFBAND_HEARTBEAT_TIMEOUT`` if set.
         max_killed_retries : int
-            The number of times to retry processing items that have been marked as killed.
-            If set to 0, no retries will be attempted.
+            The number of times to retry processing items that have been
+            marked as killed. If set to 0, no retries will be attempted.
             Defaults to 0 or the value of the environment variable
             ``LAUFBAND_MAX_KILLED_RETRIES`` if set.
         disabled : bool
@@ -155,7 +160,7 @@ class Graphband(t.Generic[TaskTypeVar]):
         self._close_trigger = False
         self.failure_policy = failure_policy
         self.tqdm_kwargs = tqdm_kwargs or {}
-        self._identifier = str(identifier()) if callable(identifier) else identifier
+        self._identifier = identifier() if callable(identifier) else identifier
         self._max_failed_retries = max_failed_retries
         self._max_killed_retries = max_killed_retries
         self._db = db
@@ -209,7 +214,7 @@ class Graphband(t.Generic[TaskTypeVar]):
                     id=self._identifier,
                     status=WorkerStatus.IDLE,
                     hostname=socket.gethostname(),
-                    pid=os.getpid(),
+                    pid=f"{socket.gethostname()}:{os.getpid()}",
                     heartbeat_interval=self._heartbeat_interval,
                     heartbeat_timeout=self._heartbeat_timeout,
                     labels=list(self.labels),
