@@ -99,7 +99,7 @@ class Graphband(t.Generic[TaskTypeVar]):
         *,
         lock: Lock = Lock("graphband.lock"),
         db: str = "sqlite:///graphband.sqlite",
-        identifier: str | t.Callable = os.getenv("LAUFBAND_IDENTIFIER", os.getpid),
+        identifier: str | t.Callable = os.getenv("LAUFBAND_IDENTIFIER") or (lambda: f"{socket.gethostname()}:{os.getpid()}")
         failure_policy: t.Literal["continue", "stop"] = os.getenv(
             "LAUFBAND_FAILURE_POLICY", "continue"
         ),
@@ -134,17 +134,17 @@ class Graphband(t.Generic[TaskTypeVar]):
             The timeout in seconds to consider a worker as dead if it has not been seen
             in the last `heartbeat_timeout` seconds. This is used to mark jobs
             as "died" if the worker process is killed unexpectedly.
-            Defaults to 1 hour or the value of the environment variable
+            Defaults to 60 seconds or the value of the environment variable
             ``LAUFBAND_HEARTBEAT_TIMEOUT`` if set.
-        max_died_retries : int
-            The number of times to retry processing items that have been marked as died.
+        max_killed_retries : int
+            The number of times to retry processing items that have been marked as killed.
             If set to 0, no retries will be attempted.
             Defaults to 0 or the value of the environment variable
-            ``LAUFBAND_MAX_DIED_RETRIES`` if set.
+            ``LAUFBAND_MAX_KILLED_RETRIES`` if set.
         disabled : bool
             If True, disable Graphband features and return a simple iterator.
             Can also be set via the environment variable
-            ``LAUFBAND_DISABLE``.
+            ``LAUFBAND_DISABLED``.
         tqdm_kwargs : dict
             Additional arguments to pass to tqdm.
         """
@@ -154,7 +154,7 @@ class Graphband(t.Generic[TaskTypeVar]):
         self._close_trigger = False
         self.failure_policy = failure_policy
         self.tqdm_kwargs = tqdm_kwargs or {}
-        self._identifier = identifier() if callable(identifier) else identifier
+        self._identifier = str(identifier()) if callable(identifier) else identifier
         self._max_failed_retries = max_failed_retries
         self._max_killed_retries = max_killed_retries
         self._db = db
