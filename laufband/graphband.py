@@ -105,7 +105,7 @@ class Graphband(t.Generic[TaskTypeVar]):
         *,
         lock: Lock = Lock("graphband.lock"),
         db: str = "sqlite:///graphband.sqlite",
-        identifier: str | t.Callable = _identifier_default_fn,
+        identifier: str | t.Callable[[], str] = _identifier_default_fn,
         failure_policy: t.Literal["continue", "stop"] = os.getenv(
             "LAUFBAND_FAILURE_POLICY", "continue"
         ),
@@ -127,10 +127,10 @@ class Graphband(t.Generic[TaskTypeVar]):
         db : str
             The database connection string. Defaults to "sqlite:///graphband.sqlite".
         identifier : str | callable, optional
-            A unique identifier for the worker. If not set, the process ID will be used.
-            If a callable is provided, it will be called to generate the identifier.
-            Must be unique across all workers. Can be set via the environment variable
-            ``LAUFBAND_IDENTIFIER``.
+            A unique identifier for the worker. If not provided or empty/whitespace,
+            it defaults to "{hostname}:{pid}". If a zero-argument callable is provided,
+            it will be called and the result used. Must be unique across all
+            workers. Can be set via the environment variable ``LAUFBAND_IDENTIFIER``.
         failure_policy : str
             If an error occurs, the generator will always yield that error.
             With the "continue" policy, other processes will continue,
