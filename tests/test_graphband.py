@@ -1,5 +1,6 @@
 import multiprocessing
 import os
+import socket
 import time
 import typing as t
 
@@ -272,7 +273,7 @@ def test_multiprocessing_sequential_task(tmp_path, num_processes):
         # increase the timeout for more processes
         pool.starmap(
             task_worker,
-            [(sequential_task, lock_path, db, file, num_processes * 0.2)]
+            [(sequential_task, lock_path, db, file, num_processes * 0.3)]
             * num_processes,
         )
 
@@ -355,11 +356,11 @@ def test_kill_sequential_task_worker(tmp_path):
     )
 
     with Session(engine) as session:
-        w1 = session.get(WorkerEntry, proc.pid)
+        w1 = session.get(WorkerEntry, f"{socket.gethostname()}:{proc.pid}")
         assert w1 is not None
         assert w1.status == WorkerStatus.KILLED
         assert len(w1.running_tasks) == 0
-        w2 = session.get(WorkerEntry, os.getpid())
+        w2 = session.get(WorkerEntry, f"{socket.gethostname()}:{os.getpid()}")
         assert w2 is not None
         assert w2.status == WorkerStatus.OFFLINE
         assert len(w2.running_tasks) == 0

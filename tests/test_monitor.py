@@ -1,4 +1,5 @@
 import os
+import socket
 import typing as t
 
 import pytest
@@ -32,11 +33,11 @@ def test_monitor(graphband_state):
     worker = m.get_workers()
     tasks = m.get_tasks()
     assert len(worker) == 1
-    assert worker[0].id == str(os.getpid())
+    assert worker[0].id == f"{socket.gethostname()}:{os.getpid()}"
     assert len(tasks) == 6
     assert tasks[0].id == "task_0"
     assert tasks[0].current_status.status == TaskStatusEnum.COMPLETED
-    assert tasks[0].current_status.worker.id == str(os.getpid())
+    assert tasks[0].current_status.worker.id == worker[0].id
     assert tasks[-1].current_status.status == TaskStatusEnum.FAILED
 
     assert tasks[0].active_workers == 0

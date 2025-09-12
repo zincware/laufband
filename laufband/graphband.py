@@ -91,6 +91,12 @@ class SizedGraphTraversalProtocol(GraphTraversalProtocol[TaskTypeVar]):
     def __len__(self) -> int: ...
 
 
+def _identifier_default_fn() -> str:
+    if ident := os.getenv("LAUFBAND_IDENTIFIER"):
+        return str(ident)
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
 class Graphband(t.Generic[TaskTypeVar]):
     def __init__(
         self,
@@ -99,7 +105,7 @@ class Graphband(t.Generic[TaskTypeVar]):
         *,
         lock: Lock = Lock("graphband.lock"),
         db: str = "sqlite:///graphband.sqlite",
-        identifier: str | t.Callable = os.getpid,
+        identifier: str | t.Callable[[], str] = _identifier_default_fn,
         failure_policy: t.Literal["continue", "stop"] = os.getenv(
             "LAUFBAND_FAILURE_POLICY", "continue"
         ),
@@ -121,10 +127,10 @@ class Graphband(t.Generic[TaskTypeVar]):
         db : str
             The database connection string. Defaults to "sqlite:///graphband.sqlite".
         identifier : str | callable, optional
-            A unique identifier for the worker. If not set, the process ID will be used.
-            If a callable is provided, it will be called to generate the identifier.
-            Must be unique across all workers. Can be set via the environment variable
-            ``LAUFBAND_IDENTIFIER``.
+            A unique identifier for the worker. If not provided or empty/whitespace,
+            it defaults to "{hostname}:{pid}". If a zero-argument callable is provided,
+            it will be called and the result used. Must be unique across all
+            workers. Can be set via the environment variable ``LAUFBAND_IDENTIFIER``.
         failure_policy : str
             If an error occurs, the generator will always yield that error.
             With the "continue" policy, other processes will continue,
@@ -134,17 +140,17 @@ class Graphband(t.Generic[TaskTypeVar]):
             The timeout in seconds to consider a worker as dead if it has not been seen
             in the last `heartbeat_timeout` seconds. This is used to mark jobs
             as "died" if the worker process is killed unexpectedly.
-            Defaults to 1 hour or the value of the environment variable
+            Defaults to 60 seconds or the value of the environment variable
             ``LAUFBAND_HEARTBEAT_TIMEOUT`` if set.
-        max_died_retries : int
-            The number of times to retry processing items that have been marked as died.
-            If set to 0, no retries will be attempted.
+        max_killed_retries : int
+            The number of times to retry processing items that have been
+            marked as killed. If set to 0, no retries will be attempted.
             Defaults to 0 or the value of the environment variable
-            ``LAUFBAND_MAX_DIED_RETRIES`` if set.
+            ``LAUFBAND_MAX_KILLED_RETRIES`` if set.
         disabled : bool
             If True, disable Graphband features and return a simple iterator.
             Can also be set via the environment variable
-            ``LAUFBAND_DISABLE``.
+            ``LAUFBAND_DISABLED``.
         tqdm_kwargs : dict
             Additional arguments to pass to tqdm.
         """
