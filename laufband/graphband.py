@@ -91,7 +91,7 @@ class SizedGraphTraversalProtocol(GraphTraversalProtocol[TaskTypeVar]):
     def __len__(self) -> int: ...
 
 
-def _identifier_default() -> str:
+def _identifier_default_fn() -> str:
     if os.getenv("LAUFBAND_IDENTIFIER"):
         return str(os.getenv("LAUFBAND_IDENTIFIER"))
     return f"{socket.gethostname()}:{os.getpid()}"
@@ -105,7 +105,7 @@ class Graphband(t.Generic[TaskTypeVar]):
         *,
         lock: Lock = Lock("graphband.lock"),
         db: str = "sqlite:///graphband.sqlite",
-        identifier: str | t.Callable = _identifier_default(),
+        identifier: str | t.Callable = _identifier_default_fn,
         failure_policy: t.Literal["continue", "stop"] = os.getenv(
             "LAUFBAND_FAILURE_POLICY", "continue"
         ),
@@ -214,7 +214,7 @@ class Graphband(t.Generic[TaskTypeVar]):
                     id=self._identifier,
                     status=WorkerStatus.IDLE,
                     hostname=socket.gethostname(),
-                    pid=f"{socket.gethostname()}:{os.getpid()}",
+                    pid=os.getpid(),
                     heartbeat_interval=self._heartbeat_interval,
                     heartbeat_timeout=self._heartbeat_timeout,
                     labels=list(self.labels),
