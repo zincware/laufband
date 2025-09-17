@@ -17,7 +17,11 @@ class Monitor:
 
     def get_workers(self) -> list[WorkerEntry]:
         with Session(self.engine) as session:
-            workers = session.query(WorkerEntry).all()
+            workers = (
+                session.query(WorkerEntry)
+                .order_by(WorkerEntry.last_heartbeat.desc())
+                .all()
+            )
             # Detach all objects from session so they can be used outside the context
             session.expunge_all()
             return workers
