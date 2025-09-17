@@ -1,4 +1,5 @@
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
 
@@ -31,6 +32,32 @@ class LaufbandStatusDisplay:
         self.lock_path = Path(lock_path)
         self.console = Console()
         self.monitor = None
+
+    def _format_uptime(self, started_at: datetime) -> str:
+        """Format worker uptime as a human-readable string"""
+        now = datetime.now()
+        # Handle timezone-naive datetime objects
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=None)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=None)
+        
+        uptime_seconds = (now - started_at).total_seconds()
+        
+        if uptime_seconds < 60:
+            return f"{int(uptime_seconds)}s"
+        elif uptime_seconds < 3600:
+            minutes = int(uptime_seconds // 60)
+            seconds = int(uptime_seconds % 60)
+            return f"{minutes}m {seconds}s"
+        elif uptime_seconds < 86400:
+            hours = int(uptime_seconds // 3600)
+            minutes = int((uptime_seconds % 3600) // 60)
+            return f"{hours}h {minutes}m"
+        else:
+            days = int(uptime_seconds // 86400)
+            hours = int((uptime_seconds % 86400) // 3600)
+            return f"{days}d {hours}h"
 
     def _ensure_monitor_connection(self):
         """Ensure monitor connection exists, create if needed"""
@@ -80,9 +107,7 @@ class LaufbandStatusDisplay:
                     {
                         "worker_id": worker.id,
                         "status": worker.status.value,
-                        "last_heartbeat": worker.last_heartbeat.strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        ),
+                        "uptime": self._format_uptime(worker.started_at),
                         "processed_tasks": processed_tasks,
                         "hostname": worker.hostname or "Unknown",
                         "pid": worker.pid or 0,
@@ -179,7 +204,7 @@ class LaufbandStatusDisplay:
         table = Table(title="Workers")
         table.add_column("Worker ID", style="cyan")
         table.add_column("Status", style="yellow")
-        table.add_column("Last Heartbeat", style="white")
+        table.add_column("Uptime", style="white")
         table.add_column("Processed Tasks", justify="right", style="magenta")
         table.add_column("Hostname", style="green")
         table.add_column("PID", justify="right", style="blue")
@@ -205,7 +230,7 @@ class LaufbandStatusDisplay:
             table.add_row(
                 worker["worker_id"],
                 Text(status, style=status_color),
-                worker["last_heartbeat"],
+                worker["uptime"],
                 str(worker["processed_tasks"]),
                 worker["hostname"],
                 str(worker["pid"]),
