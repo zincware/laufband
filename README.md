@@ -169,7 +169,7 @@ def graph_tasks():
         yield Task(
             id=node,  # unique string representation of the task
             data=node, # optional data associated with the task
-            dependencies=digraph.predecessors(node), # dependencies of the task
+            dependencies=set(digraph.predecessors(node)), # dependencies of the task
         )
 ```
 Given this generator, you can iterate the graph in parallel using `laufband.Graphband`.

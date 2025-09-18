@@ -103,7 +103,8 @@ class Graphband(t.Generic[TaskTypeVar]):
         graph_fn: GraphTraversalProtocol[TaskTypeVar]
         | SizedGraphTraversalProtocol[TaskTypeVar],
         *,
-        lock: Lock = Lock("graphband.lock"),
+        lock: Lock | None = None,
+        db_lock: Lock | None = None,
         db: str = "sqlite:///graphband.sqlite",
         identifier: str | t.Callable[[], str] = _identifier_default_fn,
         failure_policy: t.Literal["continue", "stop"] = os.getenv(
@@ -123,7 +124,9 @@ class Graphband(t.Generic[TaskTypeVar]):
         ---------
         graph_fn : GraphTraversalProtocol
         lock : Lock
-            A lock object to ensure thread safety.
+            A lock object to ensure thread safety for user operations.
+        db_lock : Lock
+            A lock object to ensure thread safety for database operations.
         db : str
             The database connection string. Defaults to "sqlite:///graphband.sqlite".
         identifier : str | callable, optional
@@ -156,7 +159,17 @@ class Graphband(t.Generic[TaskTypeVar]):
         """
         self.disabled = disabled
         self.graph_fn: GraphTraversalProtocol[TaskTypeVar] = graph_fn
+        if lock is None:
+            lock = Lock(
+                "graphband.lock", lifetime=int(heartbeat_interval * 1.5)
+            )  # TODO !! default_timeout
         self._lock = lock if not disabled else nullcontext()
+
+        if db_lock is None:
+            db_lock = Lock(
+                "graphband_db.lock", lifetime=int(int(heartbeat_interval) * 1.5)
+            )
+        self._db_lock_file = db_lock if not disabled else nullcontext()
         self._close_trigger = False
         self.failure_policy = failure_policy
         self.tqdm_kwargs = tqdm_kwargs or {}
@@ -173,26 +186,37 @@ class Graphband(t.Generic[TaskTypeVar]):
         self._labels = frozenset(labels or [])
 
         if not self.disabled:
-            # we need to lock between threads and workers,
-            # because the worker and heartbeat will share the same pid.
-            # thread-lock MUST be the first lock to be passed!
-            self._thread_lock = threading.Lock()
-            self.lock = MultiLock(self._thread_lock, self._lock)
+            # User lock is just the file lock - no thread coordination needed
+            # since database operations use separate db_lock
+            self.lock = self._lock
+
+            # Database lock needs thread coordination for internal database operations
+            self._db_thread_lock = threading.Lock()
+            self.db_lock = MultiLock(self._db_thread_lock, self._db_lock_file)
+
             self._engine = create_engine(self._db, echo=False)
             self._register_worker()
             self._thread_event = threading.Event()
             self._heartbeat_thread = threading.Thread(
                 target=heartbeat,
-                args=(self.lock, self._db, self._identifier, self._thread_event),
+                args=(
+                    self._db_thread_lock,
+                    self._db_lock_file,
+                    self._lock,
+                    self._db,
+                    self._identifier,
+                    self._thread_event,
+                ),
                 daemon=True,
             )
             self._heartbeat_thread.start()
         else:
-            self.lock = MultiLock(self._lock)
+            self.lock = self._lock
+            self.db_lock = self._lock
 
     def _register_worker(self):
         """Register the worker with the database."""
-        with self.lock:
+        with self.db_lock:
             Base.metadata.create_all(self._engine)
             with Session(self._engine) as session:
                 # check if a worker with the given identifier already exists
@@ -299,7 +323,7 @@ class Graphband(t.Generic[TaskTypeVar]):
         retryable_failed_jobs = 0
         incomplete_jobs = 0
 
-        with self.lock:
+        with self.db_lock:
             with Session(self._engine) as session:
                 # Check failed job cache
                 for task in self._failed_job_cache.values():
@@ -404,94 +428,105 @@ class Graphband(t.Generic[TaskTypeVar]):
                 )
                 continue
             with self.lock:
-                with Session(self._engine) as session:
-                    if self.failure_policy == "stop":
-                        non_compliant_tasks = set()
-                        for task_entry in session.query(TaskEntry).all():
-                            if task_entry.current_status.status not in [
-                                TaskStatusEnum.RUNNING,
-                                TaskStatusEnum.COMPLETED,
-                            ]:
-                                non_compliant_tasks.add(task_entry.id)
-                        if len(non_compliant_tasks) > 0:
-                            raise RuntimeError(
-                                f"Tasks '{non_compliant_tasks}' have failed"
-                            )
+                with self.db_lock:
+                    with Session(self._engine) as session:
+                        if self.failure_policy == "stop":
+                            non_compliant_tasks = set()
+                            for task_entry in session.query(TaskEntry).all():
+                                if task_entry.current_status.status not in [
+                                    TaskStatusEnum.RUNNING,
+                                    TaskStatusEnum.COMPLETED,
+                                ]:
+                                    non_compliant_tasks.add(task_entry.id)
+                            if len(non_compliant_tasks) > 0:
+                                raise RuntimeError(
+                                    f"Tasks '{non_compliant_tasks}' have failed"
+                                )
 
-                    # check dependencies
-                    skip_task = False
-                    for dep in task.dependencies:
-                        dep_entry = (
-                            session.query(TaskEntry).filter(TaskEntry.id == dep).first()
-                        )
-                        if dep_entry is None:
-                            log.debug(
-                                f"Dependency {dep} not found, skipping task {task.id}."
+                        # check dependencies
+                        skip_task = False
+                        for dep in task.dependencies:
+                            dep_entry = (
+                                session.query(TaskEntry)
+                                .filter(TaskEntry.id == dep)
+                                .first()
                             )
-                            skip_task = True
-                            break
-                        elif not dep_entry.completed:
-                            log.debug(
-                                f"Dependency {dep} not completed, "
-                                f"skipping task {task.id}."
-                            )
-                            skip_task = True
-                            break
-                    if skip_task:
-                        self._failed_job_cache[task.id] = task
-                        continue
+                            if dep_entry is None:
+                                log.debug(
+                                    f"Dependency {dep} not found, skipping task {task.id}."
+                                )
+                                skip_task = True
+                                break
+                            elif not dep_entry.completed:
+                                log.debug(
+                                    f"Dependency {dep} not completed, "
+                                    f"skipping task {task.id}."
+                                )
+                                skip_task = True
+                                break
+                if skip_task:
+                    self._failed_job_cache[task.id] = task
+                    continue
 
-                    task_entry = session.get(TaskEntry, task.id)
-                    if task_entry:
-                        if task_entry.completed:
-                            log.debug(f"Task {task.id} already completed, skipping.")
-                            continue
-                        if task_entry.failed_retries >= self._max_failed_retries:
-                            log.debug(
-                                f"Task {task.id} has failed too many times, skipping."
+                with self.db_lock:
+                    with Session(self._engine) as session:
+                        task_entry = session.get(TaskEntry, task.id)
+                        if task_entry:
+                            if task_entry.completed:
+                                log.debug(
+                                    f"Task {task.id} already completed, skipping."
+                                )
+                                continue
+                            if task_entry.failed_retries >= self._max_failed_retries:
+                                log.debug(
+                                    f"Task {task.id} has failed too many times, skipping."
+                                )
+                                continue
+                            if task_entry.killed_retries >= self._max_killed_retries:
+                                log.debug(
+                                    f"Task {task.id} has died too many times, skipping."
+                                )
+                                continue
+                            if not task_entry.worker_availability:
+                                log.debug(
+                                    f"Task {task.id} has no free workers, skipping."
+                                )
+                                continue
+                        else:
+                            log.debug(f"Registering task {task.id} in database.")
+                            workflow = (
+                                session.query(WorkflowEntry)
+                                .filter(WorkflowEntry.id == "main")
+                                .first()
                             )
-                            continue
-                        if task_entry.killed_retries >= self._max_killed_retries:
-                            log.debug(
-                                f"Task {task.id} has died too many times, skipping."
+                            if workflow is None:
+                                raise ValueError("Workflow 'main' not found.")
+                            task_entry = TaskEntry(
+                                id=task.id,
+                                requirements=list(task.requirements),
+                                max_parallel_workers=task.max_parallel_workers,
+                                workflow=workflow,
                             )
-                            continue
-                        if not task_entry.worker_availability:
-                            log.debug(f"Task {task.id} has no free workers, skipping.")
-                            continue
-                    else:
-                        log.debug(f"Registering task {task.id} in database.")
-                        workflow = (
-                            session.query(WorkflowEntry)
-                            .filter(WorkflowEntry.id == "main")
-                            .first()
+                            session.add(task_entry)
+                        worker = session.get(WorkerEntry, self._identifier)
+                        if worker is None:
+                            raise ValueError(
+                                f"Worker with identifier {self._identifier} not found."
+                            )
+                        task_entry.statuses.append(
+                            TaskStatusEntry(
+                                status=TaskStatusEnum.RUNNING, worker=worker
+                            )
                         )
-                        if workflow is None:
-                            raise ValueError("Workflow 'main' not found.")
-                        task_entry = TaskEntry(
-                            id=task.id,
-                            requirements=list(task.requirements),
-                            max_parallel_workers=task.max_parallel_workers,
-                            workflow=workflow,
-                        )
+                        worker.status = WorkerStatus.BUSY
                         session.add(task_entry)
-                    worker = session.get(WorkerEntry, self._identifier)
-                    if worker is None:
-                        raise ValueError(
-                            f"Worker with identifier {self._identifier} not found."
-                        )
-                    task_entry.statuses.append(
-                        TaskStatusEntry(status=TaskStatusEnum.RUNNING, worker=worker)
-                    )
-                    worker.status = WorkerStatus.BUSY
-                    session.add(task_entry)
-                    session.commit()
+                        session.commit()
             try:
                 yield task
                 self._failed_job_cache.pop(task.id, None)
             except GeneratorExit:
                 self._failed_job_cache[task.id] = task
-                with self.lock:
+                with self.db_lock:
                     with Session(self._engine) as session:
                         task_entry = session.get(TaskEntry, task.id)
                         if task_entry is None:
@@ -509,7 +544,7 @@ class Graphband(t.Generic[TaskTypeVar]):
                         session.commit()
                     completed_naturally = False
                     break
-            with self.lock:
+            with self.db_lock:
                 with Session(self._engine) as session:
                     task_entry = session.get(TaskEntry, task.id)
                     if task_entry is None:
