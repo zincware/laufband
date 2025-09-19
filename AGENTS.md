@@ -19,7 +19,7 @@ The project includes a CLI tool `laufband` with two main commands:
 - **Status**: `uv run laufband status [--db DATABASE] [--lock LOCKFILE]`
   - Shows current task statistics and worker information
   - Default database: `laufband.sqlite`, default lock: `laufband.lock`
-  
+
 - **Watch**: `uv run laufband watch [--db DATABASE] [--lock LOCKFILE] [--interval SECONDS]`
   - Real-time monitoring of task progress
   - Default interval: 2.0 seconds
