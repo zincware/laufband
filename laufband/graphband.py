@@ -157,6 +157,14 @@ class Graphband(t.Generic[TaskTypeVar]):
         tqdm_kwargs : dict
             Additional arguments to pass to tqdm.
         """
+        if heartbeat_interval >= heartbeat_timeout:
+            raise ValueError(
+                "heartbeat_interval must be less than heartbeat_timeout "
+                f"({heartbeat_interval} >= {heartbeat_timeout})"
+            )
+        if heartbeat_interval < 1:
+            raise ValueError("heartbeat_interval must be at least 1 second")
+
         self.disabled = disabled
         self.graph_fn: GraphTraversalProtocol[TaskTypeVar] = graph_fn
         if lock is None:
