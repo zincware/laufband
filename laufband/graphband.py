@@ -200,8 +200,7 @@ class Graphband(t.Generic[TaskTypeVar]):
             self._heartbeat_thread = threading.Thread(
                 target=heartbeat,
                 args=(
-                    self._db_thread_lock,
-                    self._db_lock_file,
+                    self.db_lock,
                     self._lock,
                     self._db,
                     self._identifier,

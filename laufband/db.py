@@ -34,9 +34,6 @@ class TaskStatusEnum(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
-    ABANDONED = "abandoned"
-    CANCELLED = "cancelled"
-    BLOCKED = "blocked"
     KILLED = "killed"
 
 
