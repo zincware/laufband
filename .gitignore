@@ -10,3 +10,4 @@ wheels/
 .venv
 tmp/
 .DS_Store
+.coverage*
