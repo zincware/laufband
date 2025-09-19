@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import List
 
@@ -96,6 +96,12 @@ class WorkerEntry(Base):
         for s in self.task_statuses:
             latest[s.task] = s.status
         return {t for t, st in latest.items() if st == TaskStatusEnum.RUNNING}
+
+    @property
+    def runtime(self) -> timedelta:
+        if self.status in [WorkerStatus.OFFLINE, WorkerStatus.KILLED]:
+            return self.last_heartbeat - self.started_at
+        return datetime.now() - self.started_at
 
 
 # --- TaskStatusEntry ---
