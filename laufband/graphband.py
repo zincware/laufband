@@ -162,12 +162,12 @@ class Graphband(t.Generic[TaskTypeVar]):
         if lock is None:
             lock = Lock(
                 "graphband.lock", lifetime=int(heartbeat_interval * 1.5)
-            )  # TODO !! default_timeout
+            )
         self._lock = lock if not disabled else nullcontext()
 
         if db_lock is None:
             db_lock = Lock(
-                "graphband_db.lock", lifetime=int(int(heartbeat_interval) * 1.5)
+                "graphband_db.lock", lifetime=int(heartbeat_interval * 1.5)
             )
         self._db_lock_file = db_lock if not disabled else nullcontext()
         self._close_trigger = False

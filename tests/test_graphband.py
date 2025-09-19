@@ -325,8 +325,8 @@ def test_kill_sequential_task_worker(tmp_path):
         target=task_worker,
         args=(sequential_task, lock_path, db, file, 2),
         kwargs={
-            "heartbeat_timeout": "2",
-            "heartbeat_interval": "1",
+            "heartbeat_timeout": 2,
+            "heartbeat_interval": 1,
         },
     )
     proc.start()
