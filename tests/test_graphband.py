@@ -684,8 +684,8 @@ def test_has_more_jobs_with_killed_workers(tmp_path):
         target=task_worker,
         args=(sequential_task, lock_path, db, file, 3),
         kwargs={
-            "heartbeat_timeout": 1,
-            "heartbeat_interval": 0.5,
+            "heartbeat_timeout": 2,
+            "heartbeat_interval": 1,
             "max_killed_retries": 0,  # No retries allowed for killed tasks
             "identifier": "killed-worker",
         },
@@ -810,8 +810,8 @@ def test_resume_worker(tmp_path):
         target=task_worker,
         args=(sequential_task, lock_path, db_path, tmp_path / "test.txt", 0.1),
         kwargs={
-            "heartbeat_timeout": 1,
-            "heartbeat_interval": 0.5,
+            "heartbeat_timeout": 2,
+            "heartbeat_interval": 1,
             "max_killed_retries": 0,  # No retries allowed for killed tasks
             "identifier": "killed-worker",
         },

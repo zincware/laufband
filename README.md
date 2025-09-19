@@ -129,7 +129,11 @@ with Laufband(data) as worker:
 
 - **Without context manager**: Worker goes from `IDLE` → `BUSY` → `OFFLINE` (after completing all tasks)
 - **With context manager**: Worker goes from `IDLE` → `BUSY` → `IDLE` (during processing) → `OFFLINE` (on context exit)
-```
+
+> [!NOTE]
+> Graphband uses two locks:
+> - `worker.lock`: user-facing lock for protecting shared resources in your code (files, sockets, etc.).
+> - An internal `db_lock`: used by laufband for database coordination. It’s managed by the library and typically should not be acquired directly by user code.
 
 # Examples
 
