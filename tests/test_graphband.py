@@ -86,26 +86,26 @@ def test_graphband_sequential_success(tmp_path):
         db=f"sqlite:///{tmp_path}/graphband.sqlite",
         lock=Lock(f"{tmp_path}/graphband.lock"),
     )
-    items = list(pbar)
+    with pbar:
+        items = list(pbar)
+        assert pbar._context_managed
+        assert len(items) == 10
+        with Session(pbar._engine) as session:
+            workers = session.query(WorkerEntry).all()
+            assert len(workers) == 1
+            assert workers[0].status == WorkerStatus.IDLE
+            tasks = session.query(TaskEntry).all()
+            assert len(tasks) == 10
+            for id, task in enumerate(tasks):
+                assert task.current_status.status == TaskStatusEnum.COMPLETED
+                assert task.current_status.worker == workers[0]
+                assert task.id == f"task_{id}"
 
-    assert len(items) == 10
-    with Session(pbar._engine) as session:
-        workers = session.query(WorkerEntry).all()
-        assert len(workers) == 1
-        assert workers[0].status == WorkerStatus.IDLE
-        tasks = session.query(TaskEntry).all()
-        assert len(tasks) == 10
-        for id, task in enumerate(tasks):
-            assert task.current_status.status == TaskStatusEnum.COMPLETED
-            assert task.current_status.worker == workers[0]
-            assert task.id == f"task_{id}"
+        # if we no iterate again, we yield nothing
+        assert list(pbar) == []
 
-    # if we no iterate again, we yield nothing
-    assert list(pbar) == []
-
-    # Test that worker goes offline when garbage collected
+    # Test that worker goes offline when leaving context
     engine = pbar._engine
-    del pbar
 
     with Session(engine) as session:
         workers = session.query(WorkerEntry).all()
@@ -236,7 +236,9 @@ def test_duplicate_worker(tmp_path):
         db=f"sqlite:///{tmp_path}/graphband.sqlite",
         lock=Lock(f"{tmp_path}/graphband.lock"),
     )
-    with pytest.raises(ValueError, match="Worker with this identifier already exists"):
+    with pytest.raises(
+        ValueError, match="Worker with .* already exists with status 'idle'."
+    ):
         _ = Graphband(
             sequential_task(),
             db=f"sqlite:///{tmp_path}/graphband.sqlite",
@@ -325,8 +327,8 @@ def test_kill_sequential_task_worker(tmp_path):
         target=task_worker,
         args=(sequential_task, lock_path, db, file, 2),
         kwargs={
-            "heartbeat_timeout": "2",
-            "heartbeat_interval": "1",
+            "heartbeat_timeout": 2,
+            "heartbeat_interval": 1,
         },
     )
     proc.start()
@@ -682,8 +684,8 @@ def test_has_more_jobs_with_killed_workers(tmp_path):
         target=task_worker,
         args=(sequential_task, lock_path, db, file, 3),
         kwargs={
-            "heartbeat_timeout": 1,
-            "heartbeat_interval": 0.5,
+            "heartbeat_timeout": 2,
+            "heartbeat_interval": 1,
             "max_killed_retries": 0,  # No retries allowed for killed tasks
             "identifier": "killed-worker",
         },
@@ -744,6 +746,7 @@ def test_has_more_jobs_with_killed_workers(tmp_path):
     assert retries_worker.has_more_jobs is False
 
 
+@pytest.mark.human_reviewed
 def test_resume_worker(tmp_path):
     lock_path = f"{tmp_path}/graphband.lock"
     db_path = f"sqlite:///{tmp_path}/graphband.sqlite"
@@ -764,34 +767,37 @@ def test_resume_worker(tmp_path):
         assert worker_entry is not None
         assert worker_entry.status == WorkerStatus.IDLE
 
-    for item in worker:
+    with worker:
+        for item in worker:
+            with Session(engine) as session:
+                worker_entry = session.get(WorkerEntry, "worker")
+                assert worker_entry is not None
+                assert worker_entry.status == WorkerStatus.BUSY
+            length += 1
+            if item.id == "task_5":
+                break
+        assert length == 6
+
         with Session(engine) as session:
             worker_entry = session.get(WorkerEntry, "worker")
             assert worker_entry is not None
-            assert worker_entry.status == WorkerStatus.BUSY
-        length += 1
-        if item.id == "task_5":
-            break
-    assert length == 6
+            assert worker_entry.status == WorkerStatus.IDLE
+
+        for item in worker:
+            with Session(engine) as session:
+                worker_entry = session.get(WorkerEntry, "worker")
+                assert worker_entry is not None
+                assert worker_entry.status == WorkerStatus.BUSY
+            length += 1
+
+        assert length == 10
+
+    # leaving the context should set the worker to offline
 
     with Session(engine) as session:
         worker_entry = session.get(WorkerEntry, "worker")
         assert worker_entry is not None
-        assert worker_entry.status == WorkerStatus.IDLE
-
-    for item in worker:
-        with Session(engine) as session:
-            worker_entry = session.get(WorkerEntry, "worker")
-            assert worker_entry is not None
-            assert worker_entry.status == WorkerStatus.BUSY
-        length += 1
-
-    assert length == 10
-
-    with Session(engine) as session:
-        worker_entry = session.get(WorkerEntry, "worker")
-        assert worker_entry is not None
-        assert worker_entry.status == WorkerStatus.IDLE
+        assert worker_entry.status == WorkerStatus.OFFLINE
 
     del worker
 
@@ -804,8 +810,8 @@ def test_resume_worker(tmp_path):
         target=task_worker,
         args=(sequential_task, lock_path, db_path, tmp_path / "test.txt", 0.1),
         kwargs={
-            "heartbeat_timeout": 1,
-            "heartbeat_interval": 0.5,
+            "heartbeat_timeout": 2,
+            "heartbeat_interval": 1,
             "max_killed_retries": 0,  # No retries allowed for killed tasks
             "identifier": "killed-worker",
         },
@@ -817,3 +823,144 @@ def test_resume_worker(tmp_path):
         worker_entry = session.get(WorkerEntry, "killed-worker")
         assert worker_entry is not None
         assert worker_entry.status == WorkerStatus.OFFLINE
+
+
+def test_context_manager_protocol(tmp_path):
+    """Test context manager protocol sets worker to offline on exit."""
+    lock_path = tmp_path / "test.lock"
+    db_path = tmp_path / "test.sqlite"
+    lock = Lock(str(lock_path))
+    engine = create_engine(f"sqlite:///{db_path}", echo=False)
+
+    # Test context manager usage
+    with Graphband(
+        sequential_task(),
+        lock=lock,
+        db=f"sqlite:///{db_path}",
+        identifier="context-worker",
+    ) as worker:
+        # Worker should be idle initially
+        with Session(engine) as session:
+            worker_entry = session.get(WorkerEntry, "context-worker")
+            assert worker_entry is not None
+            assert worker_entry.status == WorkerStatus.IDLE
+
+        # Process one task - worker should be busy during processing
+        tasks_processed = 0
+        for task in worker:
+            with Session(engine) as session:
+                worker_entry = session.get(WorkerEntry, "context-worker")
+                assert worker_entry is not None
+                assert worker_entry.status == WorkerStatus.BUSY
+            tasks_processed += 1
+            if tasks_processed >= 3:
+                break
+
+        # After processing, worker should be idle (inside context)
+        with Session(engine) as session:
+            worker_entry = session.get(WorkerEntry, "context-worker")
+            assert worker_entry is not None
+            assert worker_entry.status == WorkerStatus.IDLE
+
+    # After exiting context, worker should be offline
+    with Session(engine) as session:
+        worker_entry = session.get(WorkerEntry, "context-worker")
+        assert worker_entry is not None
+        assert worker_entry.status == WorkerStatus.OFFLINE
+
+
+def test_non_context_manager_sets_offline(tmp_path):
+    """Test non-context manager usage sets worker to offline after iteration."""
+    lock_path = tmp_path / "test.lock"
+    db_path = tmp_path / "test.sqlite"
+    lock = Lock(str(lock_path))
+    engine = create_engine(f"sqlite:///{db_path}", echo=False)
+
+    worker = Graphband(
+        sequential_task(),
+        lock=lock,
+        db=f"sqlite:///{db_path}",
+        identifier="non-context-worker",
+    )
+
+    # Process all tasks
+    tasks_processed = list(worker)
+    assert len(tasks_processed) == 10
+
+    # Worker should be offline after completing all tasks (non-context usage)
+    with Session(engine) as session:
+        worker_entry = session.get(WorkerEntry, "non-context-worker")
+        assert worker_entry is not None
+        assert worker_entry.status == WorkerStatus.OFFLINE
+
+
+def test_worker_reuse_from_offline(tmp_path):
+    """Test reusing a worker that was previously offline."""
+    lock_path = tmp_path / "test.lock"
+    db_path = tmp_path / "test.sqlite"
+    lock = Lock(str(lock_path))
+    engine = create_engine(f"sqlite:///{db_path}", echo=False)
+
+    # First worker - use context manager to set offline
+    with Graphband(
+        sequential_task(),
+        lock=lock,
+        db=f"sqlite:///{db_path}",
+        identifier="reuse-worker",
+    ) as worker1:
+        tasks_processed = list(worker1)
+        assert len(tasks_processed) == 10
+
+    # Verify worker is offline
+    with Session(engine) as session:
+        worker_entry = session.get(WorkerEntry, "reuse-worker")
+        assert worker_entry is not None
+        assert worker_entry.status == WorkerStatus.OFFLINE
+
+    # Second worker - should reuse the offline worker
+    with Graphband(
+        sequential_task(),
+        lock=lock,
+        db=f"sqlite:///{db_path}",
+        identifier="reuse-worker",  # Same identifier
+    ):
+        # Worker should be reset to idle when reused
+        with Session(engine) as session:
+            worker_entry = session.get(WorkerEntry, "reuse-worker")
+            assert worker_entry is not None
+            assert worker_entry.status == WorkerStatus.IDLE
+
+    # After second context, worker should be offline again
+    with Session(engine) as session:
+        worker_entry = session.get(WorkerEntry, "reuse-worker")
+        assert worker_entry is not None
+        assert worker_entry.status == WorkerStatus.OFFLINE
+
+
+def test_worker_reuse_from_non_offline_fails(tmp_path):
+    """Test that attempting to reuse a non-offline worker raises ValueError."""
+    lock_path = tmp_path / "test.lock"
+    db_path = tmp_path / "test.sqlite"
+    lock = Lock(str(lock_path))
+
+    # First worker - don't use context manager so it stays idle
+    worker1 = Graphband(
+        sequential_task(),
+        lock=lock,
+        db=f"sqlite:///{db_path}",
+        identifier="busy-worker",
+    )
+
+    with worker1:
+        # Process one task but don't complete iteration
+        for _ in worker1:
+            break  # This leaves worker in idle state
+
+        # Attempting to create another worker with same identifier should fail
+        with pytest.raises(ValueError, match="already exists with status"):
+            Graphband(
+                sequential_task(),
+                lock=lock,
+                db=f"sqlite:///{db_path}",
+                identifier="busy-worker",  # Same identifier
+            )

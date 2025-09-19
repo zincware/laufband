@@ -162,9 +162,6 @@ class LaufbandStatusDisplay:
                 "completed": "green",
                 "running": "yellow",
                 "failed": "red",
-                "abandoned": "red bold",
-                "cancelled": "orange1",
-                "blocked": "blue",
                 "killed": "red bold",
             }.get(state, "white")
 

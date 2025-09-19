@@ -102,6 +102,38 @@ for item in worker:
         worker.close()  # Job 50 will be marked as completed, and iteration will stop cleanly
 ```
 
+### Context Manager Protocol
+
+Laufband supports context manager usage for better worker lifecycle management.
+This is recommended, if you want to iterate over the `Laufband` or ``Graphband`` instance multiple times.
+
+```python
+from laufband import Laufband
+
+data = list(range(100))
+
+# Using context manager for multiple iterations (recommended)
+with Laufband(data) as worker:
+    while True:
+        for item in worker:
+            # do something
+            pass
+# Worker automatically goes offline when exiting context
+```
+
+**Context Manager Benefits:**
+
+- **Proper cleanup**: Workers are automatically set to `OFFLINE` status when exiting the context
+
+**Worker Status Lifecycle:**
+
+- **Without context manager**: Worker goes from `IDLE` → `BUSY` → `OFFLINE` (after completing all tasks)
+- **With context manager**: Worker goes from `IDLE` → `BUSY` → `IDLE` (during processing) → `OFFLINE` (on context exit)
+
+> [!NOTE]
+> Graphband uses two locks:
+> - `worker.lock`: user-facing lock for protecting shared resources in your code (files, sockets, etc.).
+> - An internal `db_lock`: used by laufband for database coordination. It’s managed by the library and typically should not be acquired directly by user code.
 
 # Examples
 
@@ -169,7 +201,7 @@ def graph_tasks():
         yield Task(
             id=node,  # unique string representation of the task
             data=node, # optional data associated with the task
-            dependencies=digraph.predecessors(node), # dependencies of the task
+            dependencies=set(digraph.predecessors(node)), # dependencies of the task
         )
 ```
 Given this generator, you can iterate the graph in parallel using `laufband.Graphband`.

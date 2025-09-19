@@ -103,7 +103,8 @@ class Graphband(t.Generic[TaskTypeVar]):
         graph_fn: GraphTraversalProtocol[TaskTypeVar]
         | SizedGraphTraversalProtocol[TaskTypeVar],
         *,
-        lock: Lock = Lock("graphband.lock"),
+        lock: Lock | None = None,
+        db_lock: Lock | None = None,
         db: str = "sqlite:///graphband.sqlite",
         identifier: str | t.Callable[[], str] = _identifier_default_fn,
         failure_policy: t.Literal["continue", "stop"] = os.getenv(
@@ -123,7 +124,9 @@ class Graphband(t.Generic[TaskTypeVar]):
         ---------
         graph_fn : GraphTraversalProtocol
         lock : Lock
-            A lock object to ensure thread safety.
+            A lock object to ensure thread safety for user operations.
+        db_lock : Lock
+            A lock object to ensure thread safety for database operations.
         db : str
             The database connection string. Defaults to "sqlite:///graphband.sqlite".
         identifier : str | callable, optional
@@ -154,9 +157,23 @@ class Graphband(t.Generic[TaskTypeVar]):
         tqdm_kwargs : dict
             Additional arguments to pass to tqdm.
         """
+        if heartbeat_interval >= heartbeat_timeout:
+            raise ValueError(
+                "heartbeat_interval must be less than heartbeat_timeout "
+                f"({heartbeat_interval} >= {heartbeat_timeout})"
+            )
+        if heartbeat_interval < 1:
+            raise ValueError("heartbeat_interval must be at least 1 second")
+
         self.disabled = disabled
         self.graph_fn: GraphTraversalProtocol[TaskTypeVar] = graph_fn
+        if lock is None:
+            lock = Lock("graphband.lock", lifetime=int(heartbeat_interval * 1.5))
         self._lock = lock if not disabled else nullcontext()
+
+        if db_lock is None:
+            db_lock = Lock("graphband_db.lock", lifetime=int(heartbeat_interval * 1.5))
+        self._db_lock_file = db_lock if not disabled else nullcontext()
         self._close_trigger = False
         self.failure_policy = failure_policy
         self.tqdm_kwargs = tqdm_kwargs or {}
@@ -171,33 +188,63 @@ class Graphband(t.Generic[TaskTypeVar]):
         self._heartbeat_timeout = heartbeat_timeout
         self._heartbeat_interval = heartbeat_interval
         self._labels = frozenset(labels or [])
+        self._context_managed = False
 
         if not self.disabled:
-            # we need to lock between threads and workers,
-            # because the worker and heartbeat will share the same pid.
-            # thread-lock MUST be the first lock to be passed!
-            self._thread_lock = threading.Lock()
-            self.lock = MultiLock(self._thread_lock, self._lock)
+            # User lock is just the file lock - no thread coordination needed
+            # since database operations use separate db_lock
+            self.lock = self._lock
+
+            # Database lock needs thread coordination for internal database operations
+            self._db_thread_lock = threading.Lock()
+            self.db_lock = MultiLock(self._db_thread_lock, self._db_lock_file)
+
             self._engine = create_engine(self._db, echo=False)
             self._register_worker()
             self._thread_event = threading.Event()
             self._heartbeat_thread = threading.Thread(
                 target=heartbeat,
-                args=(self.lock, self._db, self._identifier, self._thread_event),
+                args=(
+                    self.db_lock,
+                    self._lock,
+                    self._db,
+                    self._identifier,
+                    self._thread_event,
+                ),
                 daemon=True,
             )
             self._heartbeat_thread.start()
         else:
-            self.lock = MultiLock(self._lock)
+            self.lock = self._lock
+            self.db_lock = self._lock
 
     def _register_worker(self):
         """Register the worker with the database."""
-        with self.lock:
+        with self.db_lock:
             Base.metadata.create_all(self._engine)
             with Session(self._engine) as session:
-                # check if a worker with the given identifier already exists
-                if session.get(WorkerEntry, self._identifier) is not None:
-                    raise ValueError("Worker with this identifier already exists")
+                existing_worker = session.get(WorkerEntry, self._identifier)
+
+                if existing_worker is not None:
+                    # If identifier exists and state ≠ offline → raise ValueError
+                    if existing_worker.status != WorkerStatus.OFFLINE:
+                        raise ValueError(
+                            f"Worker with identifier '{self._identifier}' "
+                            f"already exists with status '{existing_worker.status}'. "
+                            f"Only offline workers can be reused."
+                        )
+                    # If identifier exists and state = offline → reuse but reset to idle
+                    existing_worker.status = WorkerStatus.IDLE
+                    existing_worker.hostname = socket.gethostname()
+                    existing_worker.pid = os.getpid()
+                    existing_worker.heartbeat_interval = self._heartbeat_interval
+                    existing_worker.heartbeat_timeout = self._heartbeat_timeout
+                    existing_worker.labels = list(self.labels)
+                    session.add(existing_worker)
+                    session.commit()
+                    return
+
+                # Else → new worker
                 workflow = (
                     session.query(WorkflowEntry)
                     .filter(WorkflowEntry.id == "main")
@@ -238,11 +285,32 @@ class Graphband(t.Generic[TaskTypeVar]):
         the graphband generator marking the job as completed.
         """
         self._close_trigger = True
+        if hasattr(self, "_thread_event") and hasattr(self, "_heartbeat_thread"):
+            self._thread_event.set()
+            if self._heartbeat_thread.is_alive():
+                self._heartbeat_thread.join()
+
+    def __enter__(self):
+        """Enter context manager and mark as context-managed."""
+        self._context_managed = True
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit context manager and set worker to offline."""
+        if not self.disabled:
+            with self.db_lock:
+                with Session(self._engine) as session:
+                    worker = session.get(WorkerEntry, self._identifier)
+                    if worker is not None:
+                        worker.status = WorkerStatus.OFFLINE
+                        session.add(worker)
+                        session.commit()
+        self.close()
+        return None
 
     def __len__(self) -> int:
         """Return the number of tasks in the graph."""
-        with self.lock:
-            return len(self.graph_fn)
+        return len(self.graph_fn)
 
     @property
     def identifier(self) -> str:
@@ -299,7 +367,7 @@ class Graphband(t.Generic[TaskTypeVar]):
         retryable_failed_jobs = 0
         incomplete_jobs = 0
 
-        with self.lock:
+        with self.db_lock:
             with Session(self._engine) as session:
                 # Check failed job cache
                 for task in self._failed_job_cache.values():
@@ -379,6 +447,16 @@ class Graphband(t.Generic[TaskTypeVar]):
 
         self._close_trigger = False  # reset close_trigger on new iter call
 
+        # Set initial worker status based on context usage
+        if not self.disabled and self._context_managed:
+            with self.db_lock:
+                with Session(self._engine) as session:
+                    worker = session.get(WorkerEntry, self._identifier)
+                    if worker is not None:
+                        worker.status = WorkerStatus.BUSY
+                        session.add(worker)
+                        session.commit()
+
         self._iterator = tqdm(
             (
                 node
@@ -403,7 +481,7 @@ class Graphband(t.Generic[TaskTypeVar]):
                     f"skipping worker {self.identifier} with labels: {self.labels}"
                 )
                 continue
-            with self.lock:
+            with self.db_lock:
                 with Session(self._engine) as session:
                     if self.failure_policy == "stop":
                         non_compliant_tasks = set()
@@ -437,10 +515,12 @@ class Graphband(t.Generic[TaskTypeVar]):
                             )
                             skip_task = True
                             break
-                    if skip_task:
-                        self._failed_job_cache[task.id] = task
-                        continue
+            if skip_task:
+                self._failed_job_cache[task.id] = task
+                continue
 
+            with self.db_lock:
+                with Session(self._engine) as session:
                     task_entry = session.get(TaskEntry, task.id)
                     if task_entry:
                         if task_entry.completed:
@@ -491,7 +571,7 @@ class Graphband(t.Generic[TaskTypeVar]):
                 self._failed_job_cache.pop(task.id, None)
             except GeneratorExit:
                 self._failed_job_cache[task.id] = task
-                with self.lock:
+                with self.db_lock:
                     with Session(self._engine) as session:
                         task_entry = session.get(TaskEntry, task.id)
                         if task_entry is None:
@@ -509,7 +589,7 @@ class Graphband(t.Generic[TaskTypeVar]):
                         session.commit()
                     completed_naturally = False
                     break
-            with self.lock:
+            with self.db_lock:
                 with Session(self._engine) as session:
                     task_entry = session.get(TaskEntry, task.id)
                     if task_entry is None:
@@ -544,3 +624,18 @@ class Graphband(t.Generic[TaskTypeVar]):
                 break
         if completed_naturally:
             self._iterator_completed = True
+
+        # Handle final worker status based on context usage
+        if not self.disabled:
+            with self.db_lock:
+                with Session(self._engine) as session:
+                    worker = session.get(WorkerEntry, self._identifier)
+                    if worker is not None:
+                        if self._context_managed:
+                            # Context managed: set to idle at end
+                            worker.status = WorkerStatus.IDLE
+                        else:
+                            # Not context managed: set to offline at end
+                            worker.status = WorkerStatus.OFFLINE
+                        session.add(worker)
+                        session.commit()
