@@ -76,13 +76,17 @@ class LaufbandStatusDisplay:
                     )
                 )
 
+                # Format runtime (datetime.timedelta) as hh:mm:ss
+                runtime_seconds = int(worker.runtime.total_seconds())
+                hours, remainder = divmod(runtime_seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                formatted_runtime = f"{hours:02}:{minutes:02}:{seconds:02}"
+
                 worker_info.append(
                     {
                         "worker_id": worker.id,
                         "status": worker.status.value,
-                        "last_heartbeat": worker.last_heartbeat.strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        ),
+                        "runtime": formatted_runtime,
                         "processed_tasks": processed_tasks,
                         "hostname": worker.hostname or "Unknown",
                         "pid": worker.pid or 0,
@@ -176,7 +180,7 @@ class LaufbandStatusDisplay:
         table = Table(title="Workers")
         table.add_column("Worker ID", style="cyan")
         table.add_column("Status", style="yellow")
-        table.add_column("Last Heartbeat", style="white")
+        table.add_column("Runtime", style="white")
         table.add_column("Processed Tasks", justify="right", style="magenta")
         table.add_column("Hostname", style="green")
         table.add_column("PID", justify="right", style="blue")
@@ -202,7 +206,7 @@ class LaufbandStatusDisplay:
             table.add_row(
                 worker["worker_id"],
                 Text(status, style=status_color),
-                worker["last_heartbeat"],
+                worker["runtime"],
                 str(worker["processed_tasks"]),
                 worker["hostname"],
                 str(worker["pid"]),
@@ -231,8 +235,15 @@ class LaufbandStatusDisplay:
 
         # Create layout
         layout = Layout()
-        layout.split_column(Layout(name="progress", size=5), Layout(name="tables"))
-        layout["tables"].split_row(Layout(name="stats"), Layout(name="workers"))
+
+        layout.split_column(
+            Layout(name="progress", size=5),
+            Layout(name="tables"),
+        )
+        layout["tables"].split_row(
+            Layout(name="stats", ratio=1),
+            Layout(name="workers", ratio=2),
+        )
 
         # Add content
         layout["progress"].update(self.create_progress_bar(stats))
@@ -284,10 +295,12 @@ def watch(
                     # Create layout
                     layout = Layout()
                     layout.split_column(
-                        Layout(name="progress", size=5), Layout(name="tables")
+                        Layout(name="progress", size=5),
+                        Layout(name="tables"),
                     )
                     layout["tables"].split_row(
-                        Layout(name="stats"), Layout(name="workers")
+                        Layout(name="stats", ratio=1),
+                        Layout(name="workers", ratio=2),
                     )
 
                     # Add content
