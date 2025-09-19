@@ -3,7 +3,7 @@ from datetime import datetime
 
 from flufl.lock import Lock, LockState
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import selectinload, sessionmaker
 
 from laufband.db import (
     TaskStatusEntry,
@@ -22,11 +22,11 @@ def heartbeat(
     stop_event: threading.Event,
 ):
     engine = create_engine(db, echo=False)
-    session = Session(engine)
+    Session = sessionmaker(bind=engine)  # noqa: N806
 
     with thread_lock:
         with file_lock:
-            with session:
+            with Session() as session:
                 worker = session.get(WorkerEntry, identifier)
                 if worker is None:
                     raise ValueError(f"Worker with identifier {identifier} not found.")
@@ -42,7 +42,7 @@ def heartbeat(
             user_file_lock.refresh(int(heartbeat_interval * 1.5))
         with thread_lock:
             with file_lock:
-                with session:
+                with Session() as session:
                     worker = session.get(WorkerEntry, identifier)
                     if worker is None:
                         raise ValueError(
@@ -75,7 +75,7 @@ def heartbeat(
 
     with thread_lock:
         with file_lock:
-            with session:
+            with Session() as session:
                 worker = session.get(WorkerEntry, identifier)
                 if worker is not None:
                     worker.status = WorkerStatus.OFFLINE
