@@ -102,6 +102,34 @@ for item in worker:
         worker.close()  # Job 50 will be marked as completed, and iteration will stop cleanly
 ```
 
+### Context Manager Protocol
+
+Laufband supports context manager usage for better worker lifecycle management.
+This is recommended, if you want to iterate over the `Laufband` or ``Graphband`` instance multiple times.
+
+```python
+from laufband import Laufband
+
+data = list(range(100))
+
+# Using context manager for multiple iterations (recommended)
+with Laufband(data) as worker:
+    while True:
+        for item in worker:
+            # do something
+            pass
+# Worker automatically goes offline when exiting context
+```
+
+**Context Manager Benefits:**
+
+- **Proper cleanup**: Workers are automatically set to `OFFLINE` status when exiting the context
+
+**Worker Status Lifecycle:**
+
+- **Without context manager**: Worker goes from `IDLE` → `BUSY` → `OFFLINE` (after completing all tasks)
+- **With context manager**: Worker goes from `IDLE` → `BUSY` → `IDLE` (during processing) → `OFFLINE` (on context exit)
+```
 
 # Examples
 

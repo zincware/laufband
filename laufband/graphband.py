@@ -180,6 +180,7 @@ class Graphband(t.Generic[TaskTypeVar]):
         self._heartbeat_timeout = heartbeat_timeout
         self._heartbeat_interval = heartbeat_interval
         self._labels = frozenset(labels or [])
+        self._context_managed = False
 
         if not self.disabled:
             # User lock is just the file lock - no thread coordination needed
@@ -214,9 +215,28 @@ class Graphband(t.Generic[TaskTypeVar]):
         with self.db_lock:
             Base.metadata.create_all(self._engine)
             with Session(self._engine) as session:
-                # check if a worker with the given identifier already exists
-                if session.get(WorkerEntry, self._identifier) is not None:
-                    raise ValueError("Worker with this identifier already exists")
+                existing_worker = session.get(WorkerEntry, self._identifier)
+
+                if existing_worker is not None:
+                    # If identifier exists and state ≠ offline → raise ValueError
+                    if existing_worker.status != WorkerStatus.OFFLINE:
+                        raise ValueError(
+                            f"Worker with identifier '{self._identifier}' "
+                            f"already exists with status '{existing_worker.status}'. "
+                            f"Only offline workers can be reused."
+                        )
+                    # If identifier exists and state = offline → reuse but reset to idle
+                    existing_worker.status = WorkerStatus.IDLE
+                    existing_worker.hostname = socket.gethostname()
+                    existing_worker.pid = os.getpid()
+                    existing_worker.heartbeat_interval = self._heartbeat_interval
+                    existing_worker.heartbeat_timeout = self._heartbeat_timeout
+                    existing_worker.labels = list(self.labels)
+                    session.add(existing_worker)
+                    session.commit()
+                    return
+
+                # Else → new worker
                 workflow = (
                     session.query(WorkflowEntry)
                     .filter(WorkflowEntry.id == "main")
@@ -257,6 +277,28 @@ class Graphband(t.Generic[TaskTypeVar]):
         the graphband generator marking the job as completed.
         """
         self._close_trigger = True
+        if hasattr(self, "_thread_event") and hasattr(self, "_heartbeat_thread"):
+            self._thread_event.set()
+            if self._heartbeat_thread.is_alive():
+                self._heartbeat_thread.join()
+
+    def __enter__(self):
+        """Enter context manager and mark as context-managed."""
+        self._context_managed = True
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit context manager and set worker to offline."""
+        if not self.disabled:
+            with self.db_lock:
+                with Session(self._engine) as session:
+                    worker = session.get(WorkerEntry, self._identifier)
+                    if worker is not None:
+                        worker.status = WorkerStatus.OFFLINE
+                        session.add(worker)
+                        session.commit()
+        self.close()
+        return None
 
     def __len__(self) -> int:
         """Return the number of tasks in the graph."""
@@ -396,6 +438,16 @@ class Graphband(t.Generic[TaskTypeVar]):
         """The generator that handles the iteration logic."""
 
         self._close_trigger = False  # reset close_trigger on new iter call
+
+        # Set initial worker status based on context usage
+        if not self.disabled and self._context_managed:
+            with self.db_lock:
+                with Session(self._engine) as session:
+                    worker = session.get(WorkerEntry, self._identifier)
+                    if worker is not None:
+                        worker.status = WorkerStatus.BUSY
+                        session.add(worker)
+                        session.commit()
 
         self._iterator = tqdm(
             (
@@ -564,3 +616,18 @@ class Graphband(t.Generic[TaskTypeVar]):
                 break
         if completed_naturally:
             self._iterator_completed = True
+
+        # Handle final worker status based on context usage
+        if not self.disabled:
+            with self.db_lock:
+                with Session(self._engine) as session:
+                    worker = session.get(WorkerEntry, self._identifier)
+                    if worker is not None:
+                        if self._context_managed:
+                            # Context managed: set to idle at end
+                            worker.status = WorkerStatus.IDLE
+                        else:
+                            # Not context managed: set to offline at end
+                            worker.status = WorkerStatus.OFFLINE
+                        session.add(worker)
+                        session.commit()
