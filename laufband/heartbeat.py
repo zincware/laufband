@@ -34,17 +34,16 @@ def heartbeat(
             session.commit()
 
     while not stop_event.wait(heartbeat_interval):
-        # Refresh user lock if we own it to prevent expiration during long user operations
-        # but still handle cases, where this process is killed and the lock should expire
+        # Refresh user lock if we own it to prevent expiration during
+        # long user operations but still handle cases, where this process
+        # is killed and the lock should expire
         if user_file_lock.state == LockState.ours:
             user_file_lock.refresh(int(heartbeat_interval * 1.5))
         with db_lock:
             with Session() as session:
                 worker = session.get(WorkerEntry, identifier)
                 if worker is None:
-                    raise ValueError(
-                        f"Worker with identifier {identifier} not found."
-                    )
+                    raise ValueError(f"Worker with identifier {identifier} not found.")
                 worker.last_heartbeat = datetime.now()
                 session.add(worker)
                 # check expired heartbeats
@@ -54,9 +53,7 @@ def heartbeat(
                     .options(selectinload(WorkerEntry.task_statuses))
                     .filter(
                         WorkerEntry.workflow_id == workflow_id,
-                        WorkerEntry.status.in_(
-                            [WorkerStatus.BUSY, WorkerStatus.IDLE]
-                        ),
+                        WorkerEntry.status.in_([WorkerStatus.BUSY, WorkerStatus.IDLE]),
                     )
                     .all()
                 ):

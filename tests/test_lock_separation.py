@@ -184,6 +184,7 @@ def failing_tasks():
     yield Task(id="task_0", data={"value": 0})
     yield Task(id="task_1", data={"value": 1}, dependencies={"nonexistent"})
 
+
 def test_failed_job_cache_coordination(tmp_path):
     """Test that failed job cache is properly coordinated by user lock."""
     db_path = f"sqlite:///{tmp_path}/test.db"
@@ -257,12 +258,14 @@ def test_heartbeat_continues_during_user_lock_hold(tmp_path):
 
 
 def test_user_lock_refresh_prevents_expiration(tmp_path):
-    """Test that user lock is refreshed by heartbeat to prevent expiration during long operations."""
+    """Test that user lock is refreshed by heartbeat
+    to prevent expiration during long operations."""
     lock_path = f"{tmp_path}/test.lock"
     db_lock_path = f"{tmp_path}/test_db.lock"
     db_path = f"sqlite:///{tmp_path}/test.db"
 
-    # Create user lock with lifetime shorter than heartbeat interval to test refresh functionality
+    # Create user lock with lifetime shorter than heartbeat
+    # interval to test refresh functionality
     user_lock = Lock(lock_path, lifetime=20)  # 20 second lifetime
     db_lock = Lock(db_lock_path, lifetime=60)
 

@@ -160,15 +160,11 @@ class Graphband(t.Generic[TaskTypeVar]):
         self.disabled = disabled
         self.graph_fn: GraphTraversalProtocol[TaskTypeVar] = graph_fn
         if lock is None:
-            lock = Lock(
-                "graphband.lock", lifetime=int(heartbeat_interval * 1.5)
-            )
+            lock = Lock("graphband.lock", lifetime=int(heartbeat_interval * 1.5))
         self._lock = lock if not disabled else nullcontext()
 
         if db_lock is None:
-            db_lock = Lock(
-                "graphband_db.lock", lifetime=int(heartbeat_interval * 1.5)
-            )
+            db_lock = Lock("graphband_db.lock", lifetime=int(heartbeat_interval * 1.5))
         self._db_lock_file = db_lock if not disabled else nullcontext()
         self._close_trigger = False
         self.failure_policy = failure_policy
@@ -444,9 +440,7 @@ class Graphband(t.Generic[TaskTypeVar]):
                     skip_task = False
                     for dep in task.dependencies:
                         dep_entry = (
-                            session.query(TaskEntry)
-                            .filter(TaskEntry.id == dep)
-                            .first()
+                            session.query(TaskEntry).filter(TaskEntry.id == dep).first()
                         )
                         if dep_entry is None:
                             log.debug(
@@ -470,9 +464,7 @@ class Graphband(t.Generic[TaskTypeVar]):
                     task_entry = session.get(TaskEntry, task.id)
                     if task_entry:
                         if task_entry.completed:
-                            log.debug(
-                                f"Task {task.id} already completed, skipping."
-                            )
+                            log.debug(f"Task {task.id} already completed, skipping.")
                             continue
                         if task_entry.failed_retries >= self._max_failed_retries:
                             log.debug(
@@ -485,9 +477,7 @@ class Graphband(t.Generic[TaskTypeVar]):
                             )
                             continue
                         if not task_entry.worker_availability:
-                            log.debug(
-                                f"Task {task.id} has no free workers, skipping."
-                            )
+                            log.debug(f"Task {task.id} has no free workers, skipping.")
                             continue
                     else:
                         log.debug(f"Registering task {task.id} in database.")
@@ -511,9 +501,7 @@ class Graphband(t.Generic[TaskTypeVar]):
                             f"Worker with identifier {self._identifier} not found."
                         )
                     task_entry.statuses.append(
-                        TaskStatusEntry(
-                            status=TaskStatusEnum.RUNNING, worker=worker
-                        )
+                        TaskStatusEntry(status=TaskStatusEnum.RUNNING, worker=worker)
                     )
                     worker.status = WorkerStatus.BUSY
                     session.add(task_entry)
