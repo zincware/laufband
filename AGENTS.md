@@ -10,6 +10,7 @@ This is a new application and you must not consider migrations or backwards comp
 Design all new features with maintainability and performance in mind.
 Use KISS, DRY, SOLID and YAGNI principles.
 When refactoring, you can break backwards compatibility.
+You MUST NOT use a Migration Strategy!
 Always consider a better design approach compared to the existing one.
 Consider multiple approaches, review them against the principles above, the existing methods and the overall architecture - and choose the best one.
 When in doubt, ask for a review of your design approach before implementing it.
