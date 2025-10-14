@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Table,
@@ -61,6 +62,7 @@ class WorkflowEntry(Base):
 # --- Worker ---
 class WorkerEntry(Base):
     __tablename__ = "workers"
+    __table_args__ = (Index("idx_workflow_status", "workflow_id", "status"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     status: Mapped[WorkerStatus] = mapped_column(Enum(WorkerStatus))
@@ -130,6 +132,11 @@ class WorkerEntry(Base):
 # --- TaskStatusEntry ---
 class TaskStatusEntry(Base):
     __tablename__ = "task_statuses"
+    __table_args__ = (
+        Index("idx_task_status", "task_id", "status"),
+        Index("idx_worker_status", "worker_id", "status"),
+        Index("idx_timestamp", "timestamp"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
@@ -155,6 +162,7 @@ class TaskStatusEntry(Base):
 # --- TaskEntry ---
 class TaskEntry(Base):
     __tablename__ = "tasks"
+    __table_args__ = (Index("idx_requirements", "requirements"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     requirements: Mapped[List[str]] = mapped_column(JSON, default=list)
@@ -235,3 +243,26 @@ class TaskEntry(Base):
         if self.active_workers > 0:
             return False
         return self.current_status.status == TaskStatusEnum.COMPLETED
+
+    def prune_status_history(self, session, keep_latest: int = 10) -> int:
+        """Prune status history, keeping only the N most recent status entries.
+
+        Args:
+            session: SQLAlchemy session for database operations
+            keep_latest: Number of most recent status entries to keep (default: 10)
+
+        Returns:
+            Number of status entries deleted
+        """
+        if len(self.statuses) <= keep_latest:
+            return 0
+
+        # Sort by timestamp to ensure we keep the most recent
+        sorted_statuses = sorted(self.statuses, key=lambda s: s.timestamp)
+        to_delete = sorted_statuses[:-keep_latest]
+
+        deleted_count = len(to_delete)
+        for status in to_delete:
+            session.delete(status)
+
+        return deleted_count

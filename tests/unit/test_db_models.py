@@ -2,7 +2,11 @@
 
 import pytest
 
-from laufband.db import TaskStatusEntry, TaskStatusEnum, WorkerStatus
+from laufband.db import (
+    TaskStatusEntry,
+    TaskStatusEnum,
+    WorkerStatus,
+)
 
 
 @pytest.mark.unit
@@ -239,3 +243,132 @@ def test_worker_running_tasks_property(db_session, worker_factory, task_factory)
 
     # Should only have t1 and t2, not t3 (completed)
     assert running_ids == {"t1", "t2"}
+
+
+@pytest.mark.unit
+def test_database_indexes_exist(db_engine):
+    """Database tables should have performance indexes."""
+    from sqlalchemy import inspect
+
+    inspector = inspect(db_engine)
+
+    # Check WorkerEntry indexes
+    worker_indexes = inspector.get_indexes("workers")
+    index_names = {idx["name"] for idx in worker_indexes}
+    assert "idx_workflow_status" in index_names
+
+    # Check TaskStatusEntry indexes
+    status_indexes = inspector.get_indexes("task_statuses")
+    status_index_names = {idx["name"] for idx in status_indexes}
+    assert "idx_task_status" in status_index_names
+    assert "idx_worker_status" in status_index_names
+    assert "idx_timestamp" in status_index_names
+
+    # Check TaskEntry indexes
+    task_indexes = inspector.get_indexes("tasks")
+    task_index_names = {idx["name"] for idx in task_indexes}
+    assert "idx_requirements" in task_index_names
+
+
+@pytest.mark.unit
+def test_prune_status_history_no_pruning_needed(db_session, task_factory):
+    """Pruning should not delete statuses when count is below threshold."""
+    task = task_factory(status=TaskStatusEnum.RUNNING)
+
+    # Add a few more statuses (total 5)
+    for _ in range(4):
+        db_session.add(
+            TaskStatusEntry(
+                task=task,
+                status=TaskStatusEnum.RUNNING,
+                worker=task.current_status.worker,
+            )
+        )
+    db_session.commit()
+    db_session.refresh(task)
+
+    # Should have 5 statuses
+    assert len(task.statuses) == 5
+
+    # Prune with keep_latest=10 (threshold not reached)
+    deleted = task.prune_status_history(db_session, keep_latest=10)
+
+    assert deleted == 0
+    assert len(task.statuses) == 5
+
+
+@pytest.mark.unit
+def test_prune_status_history_removes_old_entries(db_session, task_factory, mock_time):
+    """Pruning should keep only the N most recent status entries."""
+    task = task_factory(status=TaskStatusEnum.RUNNING)
+
+    # Add 14 more statuses (total 15) with different timestamps
+    for i in range(14):
+        mock_time.advance(1)
+        db_session.add(
+            TaskStatusEntry(
+                task=task,
+                status=TaskStatusEnum.RUNNING,
+                worker=task.current_status.worker,
+                timestamp=mock_time.now(),
+            )
+        )
+    db_session.commit()
+    db_session.refresh(task)
+
+    # Should have 15 statuses
+    assert len(task.statuses) == 15
+
+    # Prune to keep only 5 most recent
+    deleted = task.prune_status_history(db_session, keep_latest=5)
+
+    assert deleted == 10
+    db_session.commit()
+    db_session.refresh(task)
+
+    # Should now have only 5 statuses
+    assert len(task.statuses) == 5
+
+    # Verify we kept the most recent ones (check timestamps are increasing)
+    timestamps = [s.timestamp for s in task.statuses]
+    assert timestamps == sorted(timestamps)
+
+
+@pytest.mark.unit
+def test_prune_status_history_preserves_current_status(
+    db_session, task_factory, mock_time
+):
+    """Pruning should preserve the current (most recent) status."""
+    task = task_factory(status=TaskStatusEnum.RUNNING)
+
+    # Add more statuses
+    for i in range(19):
+        mock_time.advance(1)
+        status = TaskStatusEnum.RUNNING if i < 18 else TaskStatusEnum.COMPLETED
+        db_session.add(
+            TaskStatusEntry(
+                task=task,
+                status=status,
+                worker=task.current_status.worker,
+                timestamp=mock_time.now(),
+            )
+        )
+    db_session.commit()
+    db_session.refresh(task)
+
+    # Should have 20 statuses total
+    assert len(task.statuses) == 20
+
+    # Current status should be COMPLETED
+    assert task.current_status.status == TaskStatusEnum.COMPLETED
+
+    # Prune to keep only 3
+    task.prune_status_history(db_session, keep_latest=3)
+    db_session.commit()
+    db_session.refresh(task)
+
+    # Should have 3 statuses
+    assert len(task.statuses) == 3
+
+    # Current status should still be COMPLETED
+    assert task.current_status.status == TaskStatusEnum.COMPLETED
