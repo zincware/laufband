@@ -14,6 +14,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from laufband.time_provider import RealTimeProvider, TimeProvider
+
 # from sqlalchemy.orm import MappedAsDataclass
 
 
@@ -86,8 +88,18 @@ class WorkerEntry(Base):
     @property
     def heartbeat_expired(self) -> bool:
         """Check if the worker's heartbeat is expired."""
+        return self.is_heartbeat_expired()
+
+    def is_heartbeat_expired(self, time_provider: TimeProvider | None = None) -> bool:
+        """Check if the worker's heartbeat is expired.
+
+        Args:
+            time_provider: Optional time provider for testing. Defaults to real time.
+        """
+        if time_provider is None:
+            time_provider = RealTimeProvider()
         return (
-            datetime.now() - self.last_heartbeat
+            time_provider.now() - self.last_heartbeat
         ).total_seconds() > self.heartbeat_timeout
 
     @property
@@ -99,9 +111,20 @@ class WorkerEntry(Base):
 
     @property
     def runtime(self) -> timedelta:
+        """Calculate worker runtime."""
+        return self.calculate_runtime()
+
+    def calculate_runtime(self, time_provider: TimeProvider | None = None) -> timedelta:
+        """Calculate worker runtime.
+
+        Args:
+            time_provider: Optional time provider for testing. Defaults to real time.
+        """
+        if time_provider is None:
+            time_provider = RealTimeProvider()
         if self.status in [WorkerStatus.OFFLINE, WorkerStatus.KILLED]:
             return self.last_heartbeat - self.started_at
-        return datetime.now() - self.started_at
+        return time_provider.now() - self.started_at
 
 
 # --- TaskStatusEntry ---

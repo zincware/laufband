@@ -68,4 +68,8 @@ laufband = 'laufband.cli:app'
 [tool.pytest.ini_options]
 markers = [
     "human_reviewed: mark test that has been reviewed by a human and should not be changed by automated tools, such as LLM agents",
+    "unit: Fast unit tests without I/O, multiprocessing, or time delays",
+    "integration: Integration tests with real processes, database I/O, or coordination",
+    "slow: Long-running tests (>2s) that spawn processes or use real time delays",
 ]
+testpaths = ["tests"]

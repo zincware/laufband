@@ -6,6 +6,14 @@ Laufband is a Python library that enables parallel iteration over datasets from 
 
 ## Working Effectively
 
+This is a new application and you must not consider migrations or backwards compatibility.
+Design all new features with maintainability and performance in mind.
+Use KISS, DRY, SOLID and YAGNI principles.
+When refactoring, you can break backwards compatibility.
+Always consider a better design approach compared to the existing one.
+Consider multiple approaches, review them against the principles above, the existing methods and the overall architecture - and choose the best one.
+When in doubt, ask for a review of your design approach before implementing it.
+
 ### Build and Test Commands
 - **Run tests**: `uv run pytest --cov --tb=short`
 - **Code formatting and linting**: `uvx prek run --all-files` formats and lints all files
@@ -114,11 +122,88 @@ uv run laufband status --db test.sqlite --lock test.lock
 - **Error handling**: Tasks can fail gracefully, use `.close()` method for clean exits
 
 ### Testing Strategy
-- Tests use temporary directories (`tmp_path` fixture)
-- Database files are created with full paths in test temp directories
-- Mock scenarios test various failure modes and recovery patterns
-- Tests marked with `@pytest.mark.human_reviewed` should not be modified by automated tools
+
+The test suite is organized into **unit tests** and **integration tests** for optimal speed and maintainability:
+
+#### Test Organization
+- `tests/unit/` - Fast unit tests (<1s total, 32 tests)
+  - No multiprocessing, no time delays, no file I/O
+  - Test business logic, models, and algorithms in isolation
+  - Use `MockTimeProvider` for instant time control
+  - Use factories for consistent test data
+
+- `tests/integration/` - Integration tests (34 tests)
+  - Real multiprocessing, database I/O, and coordination
+  - Test end-to-end scenarios and worker interactions
+  - Use polling helpers to avoid fixed sleep delays
+  - Tests marked with `@pytest.mark.human_reviewed` should not be modified by automated tools
+
+#### Test Fixtures and Factories
+Available in `tests/conftest.py`:
+- `mock_time` - Controllable time provider (advance time instantly)
+- `db_engine` / `db_session` - In-memory database with auto-rollback
+- `workflow_factory` - Create test workflows
+- `worker_factory` - Create test workers (auto-incremented IDs)
+- `task_factory` - Create test tasks with various states
+- `wait_for_condition` - Polling utility for async operations
+- `db_wait_helpers` - Wait for database state changes
+
+#### Running Tests
+```bash
+# Fast unit tests only (development)
+uv run pytest -m unit  # ~0.3s
+
+# All tests with coverage (pre-commit)
+uv run pytest --cov --tb=short  # ~50s
+
+# Integration tests only
+uv run pytest tests/integration/  # ~50s
+
+# Specific test file
+uv run pytest tests/unit/test_heartbeat_logic.py -v
+```
+
+#### Writing New Tests
+
+**For Business Logic (Unit Tests)**:
+```python
+@pytest.mark.unit
+def test_heartbeat_expiration(worker_factory, mock_time):
+    """Test heartbeat logic without real delays."""
+    worker = worker_factory(heartbeat_timeout=5)
+
+    # Instantly advance time
+    mock_time.advance(6)
+
+    # Test logic
+    assert worker.is_heartbeat_expired(mock_time)
+```
+
+**For End-to-End Scenarios (Integration Tests)**:
+```python
+@pytest.mark.integration
+def test_worker_coordination(tmp_path, db_wait_helpers):
+    """Test real multiprocessing scenario."""
+    proc = multiprocessing.Process(...)
+    proc.start()
+
+    # Use polling instead of sleep
+    db_wait_helpers.wait_for_task_count(expected=5, timeout=3)
+
+    proc.join()
+```
+
+#### Testable Business Logic
+Core logic extracted to `laufband/worker_logic.py`:
+- `check_and_mark_expired_workers()` - Heartbeat monitoring
+- `should_retry_task()` - Retry policy decisions
+- `update_worker_heartbeat()` - Heartbeat updates
+- `create_worker_entry()` - Worker initialization
+
+These functions accept `TimeProvider` for controllable time in tests.
 
 ### Troubleshooting
 - If import errors occur, ensure running with `uv run` prefix
 - If tests timeout, ensure proper timeout settings (2+ minutes for test suite)
+- Unit test failures: Check factory usage and mock_time advancement
+- Integration test failures: Check for race conditions, use polling helpers
