@@ -116,6 +116,7 @@ class Graphband(t.Generic[TaskTypeVar]):
         max_killed_retries: int = int(os.getenv("LAUFBAND_MAX_KILLED_RETRIES", 0)),
         max_failed_retries: int = int(os.getenv("LAUFBAND_MAX_FAILED_RETRIES", 0)),
         disabled: bool = bool(int(os.getenv("LAUFBAND_DISABLED", "0"))),
+        enable_fingerprints: bool | None = None,
         tqdm_kwargs: dict[str, t.Any] | None = None,
         labels: set[str] | None = None,
     ):
@@ -155,6 +156,11 @@ class Graphband(t.Generic[TaskTypeVar]):
             If True, disable Graphband features and return a simple iterator.
             Can also be set via the environment variable
             ``LAUFBAND_DISABLED``.
+        enable_fingerprints : bool
+            If True, enable fingerprint-based cache invalidation. Tasks with
+            changed fingerprints or invalidated upstream dependencies will be
+            re-executed. Defaults to False or the value of the environment
+            variable ``LAUFBAND_ENABLE_FINGERPRINTS`` if set.
         tqdm_kwargs : dict
             Additional arguments to pass to tqdm.
         """
@@ -165,6 +171,12 @@ class Graphband(t.Generic[TaskTypeVar]):
             )
         if heartbeat_interval < 1:
             raise ValueError("heartbeat_interval must be at least 1 second")
+
+        # Phase 2: Check env var for enable_fingerprints if not explicitly provided
+        if enable_fingerprints is None:
+            enable_fingerprints = bool(
+                int(os.getenv("LAUFBAND_ENABLE_FINGERPRINTS", "0"))
+            )
 
         self.disabled = disabled
         self.graph_fn: GraphTraversalProtocol[TaskTypeVar] = graph_fn
@@ -193,6 +205,8 @@ class Graphband(t.Generic[TaskTypeVar]):
         # has_more_jobs caching (reduces database queries by 90%)
         self._has_more_jobs_cache = None
         self._cache_timestamp = None
+        # Phase 2: Upstream change detection
+        self._enable_fingerprints = enable_fingerprints
 
         if not self.disabled:
             # User lock is just the file lock - no thread coordination needed
@@ -558,8 +572,44 @@ class Graphband(t.Generic[TaskTypeVar]):
                     task_entry = session.get(TaskEntry, task.id)
                     if task_entry:
                         if task_entry.completed:
-                            log.debug(f"Task {task.id} already completed, skipping.")
-                            continue
+                            # Phase 2: Check for fingerprint-based invalidation
+                            if self._enable_fingerprints and task.fingerprint:
+                                # Check if fingerprint changed
+                                if task.fingerprint != task_entry.last_fingerprint:
+                                    log.info(
+                                        f"Task {task.id} fingerprint changed "
+                                        f"({task_entry.last_fingerprint} -> "
+                                        f"{task.fingerprint}), invalidating"
+                                    )
+                                    worker = session.get(WorkerEntry, self._identifier)
+                                    if worker is None:
+                                        raise ValueError(
+                                            f"Worker with id {self._identifier} "
+                                            f"not found."
+                                        )
+                                    task_entry.statuses.append(
+                                        TaskStatusEntry(
+                                            status=TaskStatusEnum.INVALIDATED,
+                                            worker=worker,
+                                            fingerprint=task.fingerprint,
+                                        )
+                                    )
+                                    session.commit()
+                                    session.refresh(task_entry)
+                                    # Don't skip - allow re-execution
+                                else:
+                                    # Fingerprint unchanged - skip as before
+                                    log.debug(
+                                        f"Task {task.id} already completed "
+                                        f"with matching fingerprint, skipping."
+                                    )
+                                    continue
+                            else:
+                                # No fingerprints enabled or no fingerprint provided
+                                log.debug(
+                                    f"Task {task.id} already completed, skipping."
+                                )
+                                continue
                         if task_entry.failed_retries >= self._max_failed_retries:
                             log.debug(
                                 f"Task {task.id} has failed too many times, skipping."
@@ -649,8 +699,12 @@ class Graphband(t.Generic[TaskTypeVar]):
                             status=TaskStatusEnum.COMPLETED,
                             worker=worker,
                             dependencies=dependencies,
+                            fingerprint=task.fingerprint,  # Phase 2: Store fingerprint
                         )
                     )
+                    # Phase 2: Update last_fingerprint on task entry
+                    if task.fingerprint:
+                        task_entry.last_fingerprint = task.fingerprint
                     worker.status = WorkerStatus.IDLE
                     session.commit()
             if self._close_trigger:

@@ -38,6 +38,7 @@ class TaskStatusEnum(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     KILLED = "killed"
+    INVALIDATED = "invalidated"
 
 
 # Association table for TaskStatusEntry dependencies on TaskEntry
@@ -158,6 +159,9 @@ class TaskStatusEntry(Base):
         secondary=task_dependencies,
     )
 
+    # Phase 2: Upstream change detection - audit trail
+    fingerprint: Mapped[str | None] = mapped_column(String, nullable=True)
+
 
 # --- TaskEntry ---
 class TaskEntry(Base):
@@ -178,6 +182,9 @@ class TaskEntry(Base):
     )
 
     max_parallel_workers: Mapped[int] = mapped_column(Integer, default=1)
+
+    # Phase 2: Upstream change detection
+    last_fingerprint: Mapped[str | None] = mapped_column(String, nullable=True)
 
     @property
     def current_status(self) -> TaskStatusEntry:
@@ -222,6 +229,10 @@ class TaskEntry(Base):
 
     @property
     def worker_availability(self) -> bool:
+        # Phase 2: If task was invalidated, allow re-execution
+        if self.current_status.status == TaskStatusEnum.INVALIDATED:
+            return True
+
         running_workers = set()
         for status in self.statuses:
             if status.worker_id is None:
@@ -242,7 +253,11 @@ class TaskEntry(Base):
     def completed(self) -> bool:
         if self.active_workers > 0:
             return False
-        return self.current_status.status == TaskStatusEnum.COMPLETED
+        status = self.current_status.status
+        # INVALIDATED tasks should be re-run, so treat as not completed
+        if status == TaskStatusEnum.INVALIDATED:
+            return False
+        return status == TaskStatusEnum.COMPLETED
 
     def prune_status_history(self, session, keep_latest: int = 10) -> int:
         """Prune status history, keeping only the N most recent status entries.

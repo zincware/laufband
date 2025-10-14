@@ -2,16 +2,14 @@
 
 import pytest
 
-from laufband.db import TaskEntry, TaskStatusEnum, WorkflowEntry
-from laufband.graphband import Graphband
-from laufband.task import Task
+from laufband.db import TaskEntry, TaskStatusEnum
 
 
 @pytest.mark.unit
 def test_has_more_jobs_caching(db_session, workflow_factory, worker_factory):
     """has_more_jobs should cache results for 5 seconds."""
     workflow = workflow_factory()
-    worker = worker_factory(workflow=workflow)
+    _worker = worker_factory(workflow=workflow)
 
     # Create a mock Graphband instance with minimal setup
     # We'll test just the caching logic by mocking the necessary attributes
@@ -84,7 +82,7 @@ def test_has_more_jobs_caching(db_session, workflow_factory, worker_factory):
 @pytest.mark.unit
 def test_has_more_jobs_cache_invalidation(db_session, workflow_factory):
     """has_more_jobs cache should expire after 5 seconds."""
-    workflow = workflow_factory()
+    _workflow = workflow_factory()
 
     class MockGraphband:
         def __init__(self):
@@ -145,7 +143,9 @@ def test_batched_dependency_query_missing_dependency(
     workflow = workflow_factory()
 
     # Create task A that's completed
-    task_a = task_factory(task_id="A", status=TaskStatusEnum.COMPLETED, workflow=workflow)
+    _task_a = task_factory(
+        task_id="A", status=TaskStatusEnum.COMPLETED, workflow=workflow
+    )
 
     # Task C has dependencies on A and B, but B doesn't exist
     # This simulates the scenario where batched query needs to detect missing deps
@@ -186,10 +186,14 @@ def test_batched_dependency_query_incomplete_dependency(
     workflow = workflow_factory()
 
     # Create task A that's completed
-    task_a = task_factory(task_id="A", status=TaskStatusEnum.COMPLETED, workflow=workflow)
+    _task_a = task_factory(
+        task_id="A", status=TaskStatusEnum.COMPLETED, workflow=workflow
+    )
 
     # Create task B that's still running
-    task_b = task_factory(task_id="B", status=TaskStatusEnum.RUNNING, workflow=workflow)
+    _task_b = task_factory(
+        task_id="B", status=TaskStatusEnum.RUNNING, workflow=workflow
+    )
 
     # Task C depends on both A and B
     task_c_deps = {"A", "B"}
@@ -236,8 +240,12 @@ def test_batched_dependency_query_all_complete(
     workflow = workflow_factory()
 
     # Create tasks A and B that are both completed
-    task_a = task_factory(task_id="A", status=TaskStatusEnum.COMPLETED, workflow=workflow)
-    task_b = task_factory(task_id="B", status=TaskStatusEnum.COMPLETED, workflow=workflow)
+    _task_a = task_factory(
+        task_id="A", status=TaskStatusEnum.COMPLETED, workflow=workflow
+    )
+    _task_b = task_factory(
+        task_id="B", status=TaskStatusEnum.COMPLETED, workflow=workflow
+    )
 
     # Task C depends on both A and B
     task_c_deps = {"A", "B"}
@@ -269,7 +277,7 @@ def test_batched_dependency_query_all_complete(
 @pytest.mark.unit
 def test_batched_dependency_query_empty_dependencies(db_session, workflow_factory):
     """Batched dependency query should handle empty dependency sets correctly."""
-    workflow = workflow_factory()
+    _workflow = workflow_factory()
 
     # Task with no dependencies
     task_deps = set()
