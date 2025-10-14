@@ -2,7 +2,7 @@
 
 import pytest
 
-from laufband.db import TaskEntry, TaskStatusEntry, TaskStatusEnum
+from laufband.db import TaskStatusEntry, TaskStatusEnum
 from laufband.task import Task
 
 
