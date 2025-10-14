@@ -1,15 +1,13 @@
 import threading
-from datetime import datetime
 
 from flufl.lock import Lock, LockState
 from sqlalchemy import create_engine
-from sqlalchemy.orm import selectinload, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
-from laufband.db import (
-    TaskStatusEntry,
-    TaskStatusEnum,
-    WorkerEntry,
-    WorkerStatus,
+from laufband.time_provider import RealTimeProvider
+from laufband.worker_logic import (
+    check_and_mark_expired_workers,
+    update_worker_heartbeat,
 )
 
 
@@ -22,15 +20,12 @@ def heartbeat(
 ):
     engine = create_engine(db, echo=False)
     Session = sessionmaker(bind=engine)  # noqa: N806
+    time_provider = RealTimeProvider()
 
     with db_lock:
         with Session() as session:
-            worker = session.get(WorkerEntry, identifier)
-            if worker is None:
-                raise ValueError(f"Worker with identifier {identifier} not found.")
-            worker.last_heartbeat = datetime.now()
+            worker = update_worker_heartbeat(session, identifier, time_provider)
             heartbeat_interval = worker.heartbeat_interval
-            session.add(worker)
             session.commit()
 
     while not stop_event.wait(heartbeat_interval):
@@ -41,34 +36,16 @@ def heartbeat(
             user_file_lock.refresh(int(heartbeat_interval * 1.5))
         with db_lock:
             with Session() as session:
-                worker = session.get(WorkerEntry, identifier)
-                if worker is None:
-                    raise ValueError(f"Worker with identifier {identifier} not found.")
-                worker.last_heartbeat = datetime.now()
-                session.add(worker)
-                # check expired heartbeats
+                worker = update_worker_heartbeat(session, identifier, time_provider)
                 workflow_id = worker.workflow_id
-                for w in (
-                    session.query(WorkerEntry)
-                    .options(selectinload(WorkerEntry.task_statuses))
-                    .filter(
-                        WorkerEntry.workflow_id == workflow_id,
-                        WorkerEntry.status.in_([WorkerStatus.BUSY, WorkerStatus.IDLE]),
-                    )
-                    .all()
-                ):
-                    if w.heartbeat_expired:
-                        w.status = WorkerStatus.KILLED
-                        for task in w.running_tasks:
-                            task_status = TaskStatusEntry(
-                                status=TaskStatusEnum.KILLED, worker=w, task=task
-                            )
-                            session.add(task_status)
-                        session.add(w)
+                # Check and mark expired workers
+                check_and_mark_expired_workers(session, workflow_id, time_provider)
                 session.commit()
 
     with db_lock:
         with Session() as session:
+            from laufband.db import WorkerEntry, WorkerStatus
+
             worker = session.get(WorkerEntry, identifier)
             if worker is not None:
                 worker.status = WorkerStatus.OFFLINE
