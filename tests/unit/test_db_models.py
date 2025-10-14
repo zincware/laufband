@@ -136,14 +136,18 @@ def test_task_active_workers_count(db_session, task_factory, worker_factory):
     assert task.active_workers == 1
 
     # Add second worker
-    db_session.add(TaskStatusEntry(task=task, status=TaskStatusEnum.RUNNING, worker=worker2))
+    db_session.add(
+        TaskStatusEntry(task=task, status=TaskStatusEnum.RUNNING, worker=worker2)
+    )
     db_session.commit()
     db_session.refresh(task)
 
     assert task.active_workers == 2
 
     # One worker completes
-    db_session.add(TaskStatusEntry(task=task, status=TaskStatusEnum.COMPLETED, worker=worker1))
+    db_session.add(
+        TaskStatusEntry(task=task, status=TaskStatusEnum.COMPLETED, worker=worker1)
+    )
     db_session.commit()
     db_session.refresh(task)
 
@@ -160,7 +164,9 @@ def test_task_worker_availability_single_worker(task_factory):
 
 
 @pytest.mark.unit
-def test_task_worker_availability_multi_worker(db_session, task_factory, worker_factory):
+def test_task_worker_availability_multi_worker(
+    db_session, task_factory, worker_factory
+):
     """Multi-worker task should show availability until max reached."""
     workflow = task_factory(status=TaskStatusEnum.RUNNING).workflow
     worker1 = worker_factory(identifier="w1", workflow=workflow)
@@ -178,7 +184,9 @@ def test_task_worker_availability_multi_worker(db_session, task_factory, worker_
 
     # Add second worker
     worker2 = worker_factory(identifier="w2", workflow=workflow)
-    db_session.add(TaskStatusEntry(task=task, status=TaskStatusEnum.RUNNING, worker=worker2))
+    db_session.add(
+        TaskStatusEntry(task=task, status=TaskStatusEnum.RUNNING, worker=worker2)
+    )
     db_session.commit()
     db_session.refresh(task)
 
@@ -214,9 +222,15 @@ def test_worker_running_tasks_property(db_session, worker_factory, task_factory)
     worker = worker_factory(workflow=workflow, identifier="test-worker")
 
     # Create multiple tasks
-    task1 = task_factory(task_id="t1", status=TaskStatusEnum.RUNNING, worker=worker, workflow=workflow)
-    task2 = task_factory(task_id="t2", status=TaskStatusEnum.RUNNING, worker=worker, workflow=workflow)
-    task3 = task_factory(task_id="t3", status=TaskStatusEnum.COMPLETED, worker=worker, workflow=workflow)
+    task1 = task_factory(
+        task_id="t1", status=TaskStatusEnum.RUNNING, worker=worker, workflow=workflow
+    )
+    task2 = task_factory(
+        task_id="t2", status=TaskStatusEnum.RUNNING, worker=worker, workflow=workflow
+    )
+    task3 = task_factory(
+        task_id="t3", status=TaskStatusEnum.COMPLETED, worker=worker, workflow=workflow
+    )
 
     db_session.refresh(worker)
 

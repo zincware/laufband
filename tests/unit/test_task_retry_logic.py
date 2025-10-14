@@ -11,7 +11,9 @@ def test_should_not_retry_completed_task(task_factory):
     """Completed tasks should not be retried."""
     task = task_factory(status=TaskStatusEnum.COMPLETED)
 
-    should_retry, reason = should_retry_task(task, max_failed_retries=2, max_killed_retries=2)
+    should_retry, reason = should_retry_task(
+        task, max_failed_retries=2, max_killed_retries=2
+    )
 
     assert not should_retry
     assert reason == "already_completed"
@@ -22,7 +24,9 @@ def test_should_retry_failed_task_within_limit(db_session, task_factory):
     """Failed tasks within retry limit should be retried."""
     task = task_factory(status=TaskStatusEnum.FAILED)
 
-    should_retry, reason = should_retry_task(task, max_failed_retries=2, max_killed_retries=2)
+    should_retry, reason = should_retry_task(
+        task, max_failed_retries=2, max_killed_retries=2
+    )
 
     assert should_retry
     assert reason is None
@@ -47,7 +51,9 @@ def test_should_not_retry_failed_task_exceeding_limit(db_session, task_factory):
     # Now task has failed 3 times total
     assert task.failed_retries == 3
 
-    should_retry, reason = should_retry_task(task, max_failed_retries=2, max_killed_retries=2)
+    should_retry, reason = should_retry_task(
+        task, max_failed_retries=2, max_killed_retries=2
+    )
 
     assert not should_retry
     assert reason == "max_failed_retries_exceeded"
@@ -58,7 +64,9 @@ def test_should_retry_killed_task_within_limit(task_factory):
     """Killed tasks within retry limit should be retried."""
     task = task_factory(status=TaskStatusEnum.KILLED)
 
-    should_retry, reason = should_retry_task(task, max_failed_retries=2, max_killed_retries=2)
+    should_retry, reason = should_retry_task(
+        task, max_failed_retries=2, max_killed_retries=2
+    )
 
     assert should_retry
     assert reason is None
@@ -83,7 +91,9 @@ def test_should_not_retry_killed_task_exceeding_limit(db_session, task_factory):
     # Now task has been killed 3 times total
     assert task.killed_retries == 3
 
-    should_retry, reason = should_retry_task(task, max_failed_retries=2, max_killed_retries=2)
+    should_retry, reason = should_retry_task(
+        task, max_failed_retries=2, max_killed_retries=2
+    )
 
     assert not should_retry
     assert reason == "max_killed_retries_exceeded"
@@ -100,7 +110,9 @@ def test_should_not_retry_killed_task_exceeding_limit(db_session, task_factory):
         (4, 3, False),  # Five failures total, well over limit
     ],
 )
-def test_failed_retry_limits(db_session, task_factory, num_retries, max_allowed, expected_retry):
+def test_failed_retry_limits(
+    db_session, task_factory, num_retries, max_allowed, expected_retry
+):
     """Test various failed retry limit scenarios.
 
     Note: task starts with one FAILED status, then we add num_retries more.
@@ -132,16 +144,22 @@ def test_should_retry_running_task_with_worker_availability(task_factory):
     task = task_factory(status=TaskStatusEnum.RUNNING, max_parallel_workers=2)
 
     # Only 1 worker currently running (the one that created the status)
-    should_retry, reason = should_retry_task(task, max_failed_retries=2, max_killed_retries=2)
+    should_retry, reason = should_retry_task(
+        task, max_failed_retries=2, max_killed_retries=2
+    )
 
     assert should_retry
     assert reason is None
 
 
 @pytest.mark.unit
-def test_should_not_retry_running_task_at_max_workers(db_session, task_factory, worker_factory):
+def test_should_not_retry_running_task_at_max_workers(
+    db_session, task_factory, worker_factory
+):
     """Running tasks at max workers should not allow more workers."""
-    workflow = task_factory(status=TaskStatusEnum.RUNNING, max_parallel_workers=1).workflow
+    workflow = task_factory(
+        status=TaskStatusEnum.RUNNING, max_parallel_workers=1
+    ).workflow
     worker = worker_factory(workflow=workflow)
     task = task_factory(
         task_id="multi-worker-task",
@@ -152,7 +170,9 @@ def test_should_not_retry_running_task_at_max_workers(db_session, task_factory, 
     )
 
     # Task already has 1 worker and max is 1
-    should_retry, reason = should_retry_task(task, max_failed_retries=2, max_killed_retries=2)
+    should_retry, reason = should_retry_task(
+        task, max_failed_retries=2, max_killed_retries=2
+    )
 
     assert not should_retry
     assert reason == "max_workers_reached"
@@ -167,7 +187,9 @@ def test_retry_policy_for_different_failure_types(task_factory, failure_type):
     """Both failed and killed tasks should follow their respective retry policies."""
     task = task_factory(status=failure_type)
 
-    should_retry, reason = should_retry_task(task, max_failed_retries=1, max_killed_retries=1)
+    should_retry, reason = should_retry_task(
+        task, max_failed_retries=1, max_killed_retries=1
+    )
 
     assert should_retry
     assert reason is None

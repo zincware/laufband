@@ -154,7 +154,9 @@ def task_factory(db_session, worker_factory, workflow_factory, mock_time):
 def wait_for_condition():
     """Utility for polling until a condition is met."""
 
-    def _wait(check_fn, timeout=5, poll_interval=0.05, error_message="Condition not met"):
+    def _wait(
+        check_fn, timeout=5, poll_interval=0.05, error_message="Condition not met"
+    ):
         """Poll for condition instead of fixed sleep.
 
         Args:

@@ -3,8 +3,6 @@
 Extracted for testability - these functions can be tested without database or multiprocessing.
 """
 
-from datetime import datetime
-
 from sqlalchemy.orm import Session, selectinload
 
 from laufband.db import (
