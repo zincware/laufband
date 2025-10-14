@@ -120,7 +120,7 @@ def update_worker_heartbeat(
 
     worker = session.get(WorkerEntry, worker_id)
     if worker is None:
-        raise ValueError(f"Worker with identifier {worker_id} not found.")
+        raise ValueError(f"Worker {worker_id} not found")
 
     worker.last_heartbeat = time_provider.now()
     session.add(worker)
