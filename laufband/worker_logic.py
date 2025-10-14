@@ -1,6 +1,7 @@
 """Business logic for worker and task management.
 
-Extracted for testability - these functions can be tested without database or multiprocessing.
+Extracted for testability - these functions can be tested without
+database or multiprocessing.
 """
 
 from sqlalchemy.orm import Session, selectinload

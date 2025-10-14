@@ -222,13 +222,13 @@ def test_worker_running_tasks_property(db_session, worker_factory, task_factory)
     worker = worker_factory(workflow=workflow, identifier="test-worker")
 
     # Create multiple tasks
-    task1 = task_factory(
+    task_factory(
         task_id="t1", status=TaskStatusEnum.RUNNING, worker=worker, workflow=workflow
     )
-    task2 = task_factory(
+    task_factory(
         task_id="t2", status=TaskStatusEnum.RUNNING, worker=worker, workflow=workflow
     )
-    task3 = task_factory(
+    task_factory(
         task_id="t3", status=TaskStatusEnum.COMPLETED, worker=worker, workflow=workflow
     )
 
