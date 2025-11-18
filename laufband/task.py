@@ -24,6 +24,10 @@ class Task(t.Generic[TaskTypeVar]):
         Additional information about the task.
     max_parallel_workers: int, default=1
         Maximum number of workers that can be assigned to this task.
+    fingerprint : str | None, optional
+        Content-based hash for cache invalidation. When provided, the task
+        will be re-executed if the fingerprint changes, enabling upstream
+        change detection. Defaults to None (no fingerprint tracking).
     """
 
     id: str
@@ -32,3 +36,4 @@ class Task(t.Generic[TaskTypeVar]):
     requirements: set[str] = dataclasses.field(default_factory=set)
     info: dict[str, t.Any] = dataclasses.field(default_factory=dict)
     max_parallel_workers: int = 1
+    fingerprint: str | None = None

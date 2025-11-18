@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Table,
@@ -37,6 +38,7 @@ class TaskStatusEnum(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     KILLED = "killed"
+    INVALIDATED = "invalidated"
 
 
 # Association table for TaskStatusEntry dependencies on TaskEntry
@@ -61,6 +63,7 @@ class WorkflowEntry(Base):
 # --- Worker ---
 class WorkerEntry(Base):
     __tablename__ = "workers"
+    __table_args__ = (Index("idx_workflow_status", "workflow_id", "status"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     status: Mapped[WorkerStatus] = mapped_column(Enum(WorkerStatus))
@@ -130,6 +133,11 @@ class WorkerEntry(Base):
 # --- TaskStatusEntry ---
 class TaskStatusEntry(Base):
     __tablename__ = "task_statuses"
+    __table_args__ = (
+        Index("idx_task_status", "task_id", "status"),
+        Index("idx_worker_status", "worker_id", "status"),
+        Index("idx_timestamp", "timestamp"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
@@ -151,10 +159,14 @@ class TaskStatusEntry(Base):
         secondary=task_dependencies,
     )
 
+    # Phase 2: Upstream change detection - audit trail
+    fingerprint: Mapped[str | None] = mapped_column(String, nullable=True)
+
 
 # --- TaskEntry ---
 class TaskEntry(Base):
     __tablename__ = "tasks"
+    __table_args__ = (Index("idx_requirements", "requirements"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     requirements: Mapped[List[str]] = mapped_column(JSON, default=list)
@@ -170,6 +182,9 @@ class TaskEntry(Base):
     )
 
     max_parallel_workers: Mapped[int] = mapped_column(Integer, default=1)
+
+    # Phase 2: Upstream change detection
+    last_fingerprint: Mapped[str | None] = mapped_column(String, nullable=True)
 
     @property
     def current_status(self) -> TaskStatusEntry:
@@ -214,6 +229,10 @@ class TaskEntry(Base):
 
     @property
     def worker_availability(self) -> bool:
+        # Phase 2: If task was invalidated, allow re-execution
+        if self.current_status.status == TaskStatusEnum.INVALIDATED:
+            return True
+
         running_workers = set()
         for status in self.statuses:
             if status.worker_id is None:
@@ -234,4 +253,31 @@ class TaskEntry(Base):
     def completed(self) -> bool:
         if self.active_workers > 0:
             return False
-        return self.current_status.status == TaskStatusEnum.COMPLETED
+        status = self.current_status.status
+        # INVALIDATED tasks should be re-run, so treat as not completed
+        if status == TaskStatusEnum.INVALIDATED:
+            return False
+        return status == TaskStatusEnum.COMPLETED
+
+    def prune_status_history(self, session, keep_latest: int = 10) -> int:
+        """Prune status history, keeping only the N most recent status entries.
+
+        Args:
+            session: SQLAlchemy session for database operations
+            keep_latest: Number of most recent status entries to keep (default: 10)
+
+        Returns:
+            Number of status entries deleted
+        """
+        if len(self.statuses) <= keep_latest:
+            return 0
+
+        # Sort by timestamp to ensure we keep the most recent
+        sorted_statuses = sorted(self.statuses, key=lambda s: s.timestamp)
+        to_delete = sorted_statuses[:-keep_latest]
+
+        deleted_count = len(to_delete)
+        for status in to_delete:
+            session.delete(status)
+
+        return deleted_count
