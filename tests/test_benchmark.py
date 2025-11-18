@@ -8,6 +8,7 @@ from flufl.lock import Lock
 
 from laufband import Graphband, Task
 
+
 def generate_dag_tasks(num_nodes: int, seed: int = 42) -> list[Task]:
     """Generate a DAG structure of tasks with multiple dependencies.
 
@@ -128,7 +129,7 @@ def test_dag_iteration_benchmark(benchmark, tmp_path, num_nodes):
             tqdm_kwargs={"disable": True},
         )
 
-        list(worker) # iterate
+        list(worker)  # iterate
 
     benchmark(iterate_and_measure)
 
