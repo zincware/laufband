@@ -26,6 +26,7 @@ dev = [
     "mypy>=1.17.1",
     "zntrack>=0.8.9",
     "networkx>=3.4.2",
+    "pytest-benchmark>=5.2.3",
 ]
 
 atomic = [
