@@ -186,6 +186,7 @@ To use this, provide an iterator that yields tasks in a valid execution order.
 import networkx as nx
 from laufband import Task
 
+
 def graph_tasks():
     digraph = nx.DiGraph()
     edges = [
@@ -200,8 +201,8 @@ def graph_tasks():
     for node in nx.topological_sort(digraph):
         yield Task(
             id=node,  # unique string representation of the task
-            data=node, # optional data associated with the task
-            dependencies=set(digraph.predecessors(node)), # dependencies of the task
+            data=node,  # optional data associated with the task
+            dependencies=set(digraph.predecessors(node)),  # dependencies of the task
         )
 ```
 Given this generator, you can iterate the graph in parallel using `laufband.Graphband`.
@@ -225,9 +226,11 @@ You can assign requirements to your tasks and labels to workers to control their
 ```py
 from laufband import Task, Graphband
 
+
 def iterator():
     yield Task(id="task1")
     yield Task(id="task2", requirements={"gpu"})
+
 
 w1 = Graphband(iterator(), identifier="w1")
 w2 = Graphband(iterator(), identifier="w2", labels={"gpu"})
@@ -246,9 +249,11 @@ Sometimes a task supports internal parallel execution (e.g., nested use of `lauf
 ```py
 from laufband import Task, Graphband
 
+
 def iterator():
     yield Task(id="task1", max_parallel_workers=2)
     # At most 2 workers will be assigned to this job until both successfully finish.
+
 
 worker = Graphband(iterator())
 
