@@ -69,11 +69,13 @@ assert len(result["processed_data"]) == 5
 from laufband import Graphband, Task
 from flufl.lock import Lock
 
+
 def create_tasks():
     yield Task(id="A", data="task_a", dependencies=set())
     yield Task(id="B", data="task_b", dependencies={"A"})
     yield Task(id="C", data="task_c", dependencies={"A"})
     yield Task(id="D", data="task_d", dependencies={"B", "C"})
+
 
 worker = Graphband(create_tasks(), db="sqlite:///graph.sqlite", lock=Lock("graph.lock"))
 
